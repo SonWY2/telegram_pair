@@ -25,6 +25,7 @@ class BotConfig:
     cli_args: tuple[str, ...]
     priority: int
     mention_aliases: tuple[str, ...]
+    default_model: str | None = None
 
     @property
     def canonical_mention(self) -> str:
@@ -120,6 +121,7 @@ def load_config(env: Mapping[str, str] | None = None) -> RuntimeConfig:
                 default_name="ClaudeCodeBot",
                 default_executable="claude",
                 default_args="-p",
+                model_key="CLAUDE_MODEL",
                 priority=1,
             ),
             _load_bot_config(
@@ -132,6 +134,7 @@ def load_config(env: Mapping[str, str] | None = None) -> RuntimeConfig:
                 default_name="CodexPairBot",
                 default_executable="codex",
                 default_args="",
+                model_key="CODEX_MODEL",
                 priority=2,
             ),
         ),
@@ -183,6 +186,7 @@ def _load_bot_config(
     default_name: str,
     default_executable: str,
     default_args: str,
+    model_key: str,
     priority: int,
 ) -> BotConfig:
     name = values.get(name_key, default_name).strip() or default_name
@@ -194,6 +198,7 @@ def _load_bot_config(
         cli_args=_parse_args(values.get(args_key, default_args)),
         priority=priority,
         mention_aliases=aliases,
+        default_model=values.get(model_key, "").strip() or None,
     )
 
 

@@ -8,6 +8,7 @@ from .models import RouteDecision, RouteMode
 
 
 MENTION_PATTERN_TEMPLATE = r"(?<!\w){alias}(?!\w)"
+TELEGRAM_COMMAND_PATTERN = re.compile(r"^/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)")
 
 
 def route_message(
@@ -60,6 +61,8 @@ def _route_message_impl(
     text = (message_text or "").strip()
     if is_bot_author or not text:
         return RouteDecision(mode=RouteMode.IGNORE, reason="empty")
+    if _is_telegram_command(text):
+        return RouteDecision(mode=RouteMode.IGNORE, reason="telegram-command")
 
     if text.startswith(";"):
         prompt_text = _normalize_prompt_text(text[1:], bot_aliases)
@@ -122,3 +125,7 @@ def _normalize_prompt_text(text: str, bot_aliases: Mapping[str, Sequence[str]]) 
 
 def _mention_pattern(alias: str) -> str:
     return MENTION_PATTERN_TEMPLATE.format(alias=re.escape(alias))
+
+
+def _is_telegram_command(text: str) -> bool:
+    return TELEGRAM_COMMAND_PATTERN.match(text) is not None

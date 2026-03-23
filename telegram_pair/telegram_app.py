@@ -219,6 +219,18 @@ class RoutedTelegramMessageProcessor:
             )
             return
 
+        if await self._orchestrator.handle_model_command(
+            chat_id=inbound.chat_id,
+            command_text=inbound.text,
+        ):
+            self._logger.info(
+                "Handled model command chat_id=%s message_id=%s text=%r",
+                inbound.chat_id,
+                inbound.message_id,
+                inbound.text,
+            )
+            return
+
         route = route_message_from_bot_configs(
             inbound.text,
             bot_configs=self._runtime_config.bot_configs,
@@ -232,6 +244,13 @@ class RoutedTelegramMessageProcessor:
             )
             return
 
+        self._logger.info(
+            "Processing inbound route chat_id=%s message_id=%s mode=%s targets=%s",
+            inbound.chat_id,
+            inbound.message_id,
+            route.mode.value,
+            ",".join(route.target_bot_names),
+        )
         await self._orchestrator.handle_route(
             chat_id=inbound.chat_id,
             message_id=inbound.message_id,

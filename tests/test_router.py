@@ -93,6 +93,28 @@ def test_empty_prompt_after_stripping_mentions_is_ignored() -> None:
     assert decision.normalized_text == ""
 
 
+def test_telegram_slash_command_is_ignored() -> None:
+    decision = route_message(
+        "/start",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision.mode is RouteMode.IGNORE
+    assert decision.reason == "telegram-command"
+
+
+def test_telegram_slash_command_with_bot_suffix_is_ignored() -> None:
+    decision = route_message(
+        "/start@wy_codex_bot",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision.mode is RouteMode.IGNORE
+    assert decision.reason == "telegram-command"
+
+
 def test_mentions_are_stripped_from_prompt_text() -> None:
     decision = route_message(
         "@ClaudeCodeBot can you pair with @CodexPairBot on this?",

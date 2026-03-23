@@ -53,6 +53,7 @@ class CliRequest:
     prompt: str
     cwd: Path
     timeout_seconds: int
+    model_override: str | None = None
     context_excerpt: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 

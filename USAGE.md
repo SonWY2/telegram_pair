@@ -62,7 +62,9 @@ export CODEX_CLI_EXECUTABLE='codex'
 - `CLAUDE_CLI_ARGS` — 기본값: `-p`
 - `CODEX_CLI_ARGS` — 기본값: 빈 값 (wrapper가 `codex exec`를 자동 사용)
 - `CLAUDE_MENTION_ALIASES` — 예: `@ClaudeCodeBot`
+- `CLAUDE_MODEL` — 시작 시 Claude 기본 모델 override (선택)
 - `CODEX_MENTION_ALIASES` — 예: `@CodexPairBot`
+- `CODEX_MODEL` — 시작 시 Codex 기본 모델 override (선택)
 - `TELEGRAM_PAIR_WORKSPACE_DIR` — 기본값: `./runtime`
 - `TELEGRAM_PAIR_CONTEXT_PATH` — 기본값: `<workspace>/context.md`
 - `TELEGRAM_PAIR_TIMEOUT_SECONDS` — 기본값: `180`
@@ -157,6 +159,45 @@ Codex만 호출:
 @ClaudeCodeBot @CodexPairBot 먼저 설계하고 그 다음 비판적으로 보완해줘
 ```
 
+## 7.3 진행 상태 알림
+
+요청이 실제 작업으로 들어가면 봇은 먼저 짧은 진행 메시지를 보냅니다.
+
+예:
+
+```text
+⏳ ClaudeCodeBot 작업을 시작합니다...
+```
+
+브로드캐스트면 Codex 차례에서 추가로:
+
+```text
+⏳ CodexPairBot 작업을 시작합니다... (이전 봇 응답 반영)
+```
+
+터미널 로그에도 route / CLI 시작 / CLI 종료 / 소요시간이 기록됩니다.
+
+## 7.4 Telegram 제어 명령
+
+일반 Telegram 명령은 무시됩니다.
+
+예:
+- `/start`
+- `/help`
+- `/start@botname`
+
+하지만 아래 앱 제어 명령은 처리됩니다:
+
+```text
+/model status
+/model claude sonnet
+/model codex gpt-5.4
+/model all gpt-5.4
+/model reset claude
+```
+
+`/model` 명령은 현재 프로세스용 모델 override를 바꾸고, workspace 아래 `bot_models.json`에 저장됩니다.
+
 ## 8. 실제 동작 방식
 
 브로드캐스트 시 실행 순서:
@@ -177,6 +218,7 @@ Codex만 호출:
 - 봇이 보낸 메시지
 - 텍스트/캡션이 없는 업데이트
 - 트리거가 없는 일반 메시지
+- Telegram 슬래시 명령(`/start`, `/help`, `/start@bot`)
 - mention 제거 후 빈 문자열이 되는 메시지
 - `TELEGRAM_PAIR_TARGET_CHAT_ID`와 다른 채팅에서 온 메시지
 
@@ -308,6 +350,7 @@ python -m telegram_pair.main
 - `TELEGRAM_PAIR_TARGET_CHAT_ID`를 설정하면 실수로 다른 채팅을 처리하지 않습니다.
 - `runtime/context.md`를 주기적으로 백업하면 대화 흐름을 추적하기 쉽습니다.
 - Claude는 보통 `CLAUDE_CLI_ARGS=-p`를 사용합니다.
+- Claude 응답에 `bkit Feature Usage` 라인이 나오면 그 줄부터 뒤는 자동으로 잘라냅니다.
 - Codex는 보통 `CODEX_CLI_ARGS=`(빈 값)으로 두고 wrapper가 `codex exec`를 자동 호출하게 두는 편이 안전합니다.
 
 ## 16. 최소 실행 예시

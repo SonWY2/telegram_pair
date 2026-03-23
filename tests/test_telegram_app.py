@@ -175,6 +175,9 @@ async def test_routed_processor_calls_orchestrator_with_normalized_text(tmp_path
     calls = []
 
     class FakeOrchestrator:
+        async def handle_model_command(self, **kwargs):
+            return False
+
         async def handle_route(self, **kwargs):
             calls.append(kwargs)
             return []
@@ -204,6 +207,9 @@ async def test_routed_processor_skips_non_target_chat(tmp_path: Path):
     calls = []
 
     class FakeOrchestrator:
+        async def handle_model_command(self, **kwargs):
+            return False
+
         async def handle_route(self, **kwargs):
             calls.append(kwargs)
             return []
@@ -223,6 +229,65 @@ async def test_routed_processor_skips_non_target_chat(tmp_path: Path):
     )
 
     assert calls == []
+
+
+async def test_routed_processor_ignores_telegram_slash_commands(tmp_path: Path):
+    calls = []
+
+    class FakeOrchestrator:
+        async def handle_model_command(self, **kwargs):
+            return False
+
+        async def handle_route(self, **kwargs):
+            calls.append(kwargs)
+            return []
+
+    processor = RoutedTelegramMessageProcessor(
+        build_runtime_config(tmp_path),
+        FakeOrchestrator(),  # type: ignore[arg-type]
+    )
+
+    await processor.process_telegram_message(
+        InboundTelegramMessage(
+            receiver_bot="ClaudeCodeBot",
+            chat_id=111,
+            message_id=12,
+            text="/start@wy_codex_bot",
+        )
+    )
+
+    assert calls == []
+
+
+async def test_routed_processor_handles_model_command_before_router(tmp_path: Path):
+    route_calls = []
+    model_calls = []
+
+    class FakeOrchestrator:
+        async def handle_model_command(self, **kwargs):
+            model_calls.append(kwargs)
+            return True
+
+        async def handle_route(self, **kwargs):
+            route_calls.append(kwargs)
+            return []
+
+    processor = RoutedTelegramMessageProcessor(
+        build_runtime_config(tmp_path),
+        FakeOrchestrator(),  # type: ignore[arg-type]
+    )
+
+    await processor.process_telegram_message(
+        InboundTelegramMessage(
+            receiver_bot="ClaudeCodeBot",
+            chat_id=111,
+            message_id=13,
+            text="/model status",
+        )
+    )
+
+    assert len(model_calls) == 1
+    assert route_calls == []
 
 
 async def test_poll_bots_closes_sessions_on_cancellation(monkeypatch):

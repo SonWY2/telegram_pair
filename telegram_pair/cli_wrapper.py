@@ -104,7 +104,11 @@ def _build_argv(request: CliRequest) -> tuple[str, ...]:
         args = _normalize_codex_args(args)
         if not args or args[0] not in {"exec", "review", "login", "logout", "mcp", "help"}:
             args = ["exec", "--skip-git-repo-check", *args]
+        if request.model_override:
+            args = [*args, "--model", request.model_override]
         return (executable, *args, request.prompt)
+    if request.model_override:
+        args = [*args, "--model", request.model_override]
     return (executable, *args)
 
 

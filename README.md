@@ -76,3 +76,20 @@ telegram_pair/
 │   └── models.py
 └── tests/
 ```
+
+
+## Progress UX
+
+- The bot now sends an immediate in-chat progress notice before each Claude/Codex run.
+- Runtime logs include route decisions plus CLI start/finish lines with durations.
+- Telegram slash commands like `/start` are ignored, while `/model ...` is handled as an app control command.
+
+## Model control from Telegram
+
+Supported commands:
+
+- `/model status`
+- `/model claude <model>`
+- `/model codex <model>`
+- `/model all <model>`
+- `/model reset claude|codex|all`
