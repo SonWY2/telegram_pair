@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telegram-pair"
+version = "0.1.0"
+description = "Local-first Telegram AI pair-programming bot orchestrator"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "OpenAI Codex" },
+]
+dependencies = [
+  "aiogram>=3.0,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8,<9",
+  "pytest-asyncio>=0.23,<0.25",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["telegram_pair*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
