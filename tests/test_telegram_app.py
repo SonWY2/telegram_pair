@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from telegram_pair.config import BotConfig, RuntimeConfig
@@ -18,6 +19,7 @@ from telegram_pair.telegram_app import (
 @dataclass
 class FakeUser:
     is_bot: bool = False
+    id: int | None = None
 
 
 @dataclass
@@ -32,6 +34,7 @@ class FakeMessage:
     text: str | None = None
     caption: str | None = None
     from_user: FakeUser = field(default_factory=FakeUser)
+    date: datetime | None = None
 
 
 @dataclass
@@ -128,6 +131,25 @@ async def test_duplicate_updates_are_processed_once():
     assert first is True
     assert second is False
     assert [message.text for message in processor.messages] == ["; compare"]
+
+
+async def test_duplicate_updates_with_different_bot_message_ids_are_processed_once():
+    runtime, processor, _ = build_runtime()
+    sent_at = datetime(2026, 3, 25, 0, 0, tzinfo=timezone.utc)
+    user = FakeUser(id=777)
+
+    first = await runtime.handle_update(
+        "claude",
+        FakeMessage(chat=FakeChat(1), message_id=99, text="@CodexPairBot check this", from_user=user, date=sent_at),
+    )
+    second = await runtime.handle_update(
+        "codex",
+        FakeMessage(chat=FakeChat(1), message_id=1001, text="@CodexPairBot check this", from_user=user, date=sent_at),
+    )
+
+    assert first is True
+    assert second is False
+    assert [message.text for message in processor.messages] == ["@CodexPairBot check this"]
 
 
 async def test_different_messages_in_same_chat_are_both_processed():

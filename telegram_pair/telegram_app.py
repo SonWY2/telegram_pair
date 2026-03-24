@@ -6,6 +6,7 @@ import signal
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Protocol
 
 try:  # pragma: no cover - exercised indirectly when aiogram is installed
@@ -65,19 +66,54 @@ class DedupCache:
         self._ttl_seconds = ttl_seconds
         self._clock = clock
         self._max_entries = max_entries
-        self._expires_at: dict[tuple[int, int], float] = {}
+        self._expires_at: dict[object, float] = {}
 
-    def should_process(self, chat_id: int, message_id: int) -> bool:
+    def should_process(
+        self,
+        chat_id: int,
+        message_id: int,
+        *,
+        text: str | None = None,
+        author_id: int | None = None,
+        sent_at: datetime | int | float | None = None,
+    ) -> bool:
         now = self._clock()
         self._purge(now)
-        key = (chat_id, message_id)
-        if key in self._expires_at:
+        keys = self._build_keys(
+            chat_id,
+            message_id,
+            text=text,
+            author_id=author_id,
+            sent_at=sent_at,
+        )
+        if any(key in self._expires_at for key in keys):
             return False
-        self._expires_at[key] = now + self._ttl_seconds
-        if len(self._expires_at) > self._max_entries:
+        expires_at = now + self._ttl_seconds
+        for key in keys:
+            self._expires_at[key] = expires_at
+        self._trim_to_limit()
+        return True
+
+    def _build_keys(
+        self,
+        chat_id: int,
+        message_id: int,
+        *,
+        text: str | None,
+        author_id: int | None,
+        sent_at: datetime | int | float | None,
+    ) -> tuple[object, ...]:
+        keys: list[object] = [("message", chat_id, message_id)]
+        text_value = (text or "").strip()
+        sent_marker = _normalize_sent_marker(sent_at)
+        if text_value and author_id is not None and sent_marker is not None:
+            keys.append(("content", chat_id, author_id, sent_marker, text_value))
+        return tuple(keys)
+
+    def _trim_to_limit(self) -> None:
+        while len(self._expires_at) > self._max_entries:
             oldest_key = min(self._expires_at, key=self._expires_at.__getitem__)
             self._expires_at.pop(oldest_key, None)
-        return True
 
     def _purge(self, now: float) -> None:
         expired = [key for key, expires_at in self._expires_at.items() if expires_at <= now]
@@ -139,14 +175,25 @@ class TelegramRuntime:
         self._logger = logger or LOGGER
 
     async def handle_update(self, receiver_bot: str, update_or_message: Any) -> bool:
-        inbound = self._to_inbound_message(receiver_bot, update_or_message)
+        message = extract_message(update_or_message)
+        inbound = self._to_inbound_message(receiver_bot, message)
         if inbound is None:
             return False
-        if not self._dedup_cache.should_process(inbound.chat_id, inbound.message_id):
+        author = getattr(message, "from_user", None)
+        author_id = getattr(author, "id", None)
+        sent_at = getattr(message, "date", None)
+        if not self._dedup_cache.should_process(
+            inbound.chat_id,
+            inbound.message_id,
+            text=inbound.text,
+            author_id=int(author_id) if author_id is not None else None,
+            sent_at=sent_at,
+        ):
             self._logger.debug(
-                "Skipping duplicate Telegram update chat_id=%s message_id=%s",
+                "Skipping duplicate Telegram update chat_id=%s message_id=%s receiver_bot=%s",
                 inbound.chat_id,
                 inbound.message_id,
+                receiver_bot,
             )
             return False
         await self._processor.process_telegram_message(inbound)
@@ -400,3 +447,11 @@ async def poll_bots(runtime: TelegramRuntime, bots: Mapping[str, Any]) -> None:
         await asyncio.gather(stop_task, return_exceptions=True)
         cleanup_signal_handlers()
         await runtime.close()
+
+
+def _normalize_sent_marker(sent_at: datetime | int | float | None) -> int | float | None:
+    if sent_at is None:
+        return None
+    if isinstance(sent_at, datetime):
+        return sent_at.timestamp()
+    return sent_at
