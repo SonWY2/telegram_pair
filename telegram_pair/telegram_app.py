@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -341,18 +342,61 @@ def build_dispatcher(runtime: TelegramRuntime, receiver_bot: str) -> Any:
     return dispatcher
 
 
+def _install_shutdown_signal_handlers(stop: Callable[[], None]) -> Callable[[], None]:
+    loop = asyncio.get_running_loop()
+    registered: list[signal.Signals] = []
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop)
+        except (NotImplementedError, RuntimeError, ValueError):
+            continue
+        registered.append(sig)
+
+    def cleanup() -> None:
+        for sig in registered:
+            loop.remove_signal_handler(sig)
+
+    return cleanup
+
+
 async def poll_bots(runtime: TelegramRuntime, bots: Mapping[str, Any]) -> None:
     dispatchers = {name: build_dispatcher(runtime, name) for name in bots}
+    stop_event = asyncio.Event()
+    cleanup_signal_handlers = _install_shutdown_signal_handlers(stop_event.set)
     tasks = [
-        asyncio.create_task(dispatchers[name].start_polling(bot), name=f"poll:{name}")
+        asyncio.create_task(
+            dispatchers[name].start_polling(bot, handle_signals=False),
+            name=f"poll:{name}",
+        )
         for name, bot in bots.items()
     ]
+    stop_task = asyncio.create_task(stop_event.wait(), name="poll:stop")
     try:
-        await asyncio.gather(*tasks)
+        done, pending = await asyncio.wait(
+            [*tasks, stop_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if stop_task in done:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            return
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        for task in done:
+            if task is stop_task:
+                continue
+            exception = task.exception()
+            if exception is not None:
+                raise exception
     except asyncio.CancelledError:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
     finally:
+        stop_task.cancel()
+        await asyncio.gather(stop_task, return_exceptions=True)
+        cleanup_signal_handlers()
         await runtime.close()

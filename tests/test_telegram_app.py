@@ -296,7 +296,7 @@ async def test_poll_bots_closes_sessions_on_cancellation(monkeypatch):
     runtime, _, bots = build_runtime()
 
     class FakeDispatcher:
-        async def start_polling(self, bot):
+        async def start_polling(self, bot, **kwargs):
             try:
                 await asyncio.sleep(3600)
             except asyncio.CancelledError:
@@ -315,6 +315,36 @@ async def test_poll_bots_closes_sessions_on_cancellation(monkeypatch):
         await task
     except asyncio.CancelledError:
         pass
+
+    assert bots["claude"].session.closed is True
+    assert bots["codex"].session.closed is True
+
+
+async def test_poll_bots_stops_on_shutdown_signal(monkeypatch):
+    runtime, _, bots = build_runtime()
+
+    class FakeDispatcher:
+        async def start_polling(self, bot, **kwargs):
+            await asyncio.sleep(3600)
+
+    def fake_install_shutdown_signal_handlers(stop):
+        async def trigger_stop() -> None:
+            await asyncio.sleep(0)
+            stop()
+
+        asyncio.create_task(trigger_stop())
+        return lambda: None
+
+    monkeypatch.setattr(
+        "telegram_pair.telegram_app.build_dispatcher",
+        lambda runtime, receiver_bot: FakeDispatcher(),
+    )
+    monkeypatch.setattr(
+        "telegram_pair.telegram_app._install_shutdown_signal_handlers",
+        fake_install_shutdown_signal_handlers,
+    )
+
+    await poll_bots(runtime, bots)
 
     assert bots["claude"].session.closed is True
     assert bots["codex"].session.closed is True
