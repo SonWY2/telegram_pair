@@ -148,16 +148,63 @@ Codex만 호출:
 
 ### 7.2 브로드캐스트
 
-두 봇 순차 호출:
+기본 브로드캐스트는 두 봇 병렬 호출입니다:
 
 ```text
-; 이 구현의 구조를 먼저 제안하고 그 다음 개선안까지 내줘
+; 이 구현의 구조를 비교해줘
 ```
 
 또는 dual mention:
 
 ```text
-@ClaudeCodeBot @CodexPairBot 먼저 설계하고 그 다음 비판적으로 보완해줘
+@ClaudeCodeBot @CodexPairBot 이 구현 대안을 비교해줘
+```
+
+두 방식은 같은 의미입니다. 둘 다 **두 봇을 동시에 실행**하고, 각 봇이 자기 답변을 따로 보냅니다.
+
+### 7.2.1 순차 브로드캐스트
+
+순차 모드는 첫 번째 봇 응답을 두 번째 봇에게 넘겨서, 후속 검토/보완 응답을 받는 방식입니다.
+
+사용 문법:
+
+```text
+; seq 이 설계를 먼저 제안하고 그 다음 비판적으로 보완해줘
+```
+
+또는:
+
+```text
+; seq: 이 설계를 먼저 제안하고 그 다음 비판적으로 보완해줘
+```
+
+동작 순서:
+
+1. priority 1 봇 실행
+2. priority 1 응답을 Telegram에 전송
+3. priority 1 응답(또는 실패 노트)을 priority 2 프롬프트에 주입
+4. priority 2 후속 응답을 Telegram에 전송
+
+### 7.2.2 team 협업 모드
+
+`team`은 브로드캐스트와 다르게:
+
+1. 두 봇이 먼저 병렬로 독립 응답하고
+2. 그 결과를 바탕으로
+3. priority 2 봇이 최종 통합 답변을 한 번 더 생성합니다
+
+이때 priority 2 봇의 1차 응답은 내부 팀 합성용으로만 사용되고, Telegram에는 최종 통합 답변만 표시됩니다.
+
+사용 문법:
+
+```text
+; team 비트코인 전망을 각각 분석하고 마지막에 토론해서 결론 내줘
+```
+
+또는:
+
+```text
+; team: 비트코인 전망을 각각 분석하고 마지막에 토론해서 결론 내줘
 ```
 
 ## 7.3 진행 상태 알림
@@ -170,12 +217,6 @@ Codex만 호출:
 ⏳ ClaudeCodeBot 작업을 시작합니다...
 ```
 
-브로드캐스트면 Codex 차례에서 추가로:
-
-```text
-⏳ CodexPairBot 작업을 시작합니다... (이전 봇 응답 반영)
-```
-
 짧게 끝나는 작업은 이 진행 메시지가 생략됩니다. 지연값은 `TELEGRAM_PAIR_PROGRESS_NOTICE_DELAY_SECONDS`로 조절할 수 있습니다.
 
 터미널 로그에도 route / CLI 시작 / CLI 종료 / 소요시간이 기록됩니다.
@@ -186,12 +227,12 @@ Codex만 호출:
 
 예:
 - `/start`
-- `/help`
 - `/start@botname`
 
 하지만 아래 앱 제어 명령은 처리됩니다:
 
 ```text
+/help
 /model status
 /model claude sonnet
 /model codex gpt-5.4
@@ -199,20 +240,61 @@ Codex만 호출:
 /model reset claude
 ```
 
+`/help` 는 다음 사용법을 안내합니다:
+
+- 단일 호출
+- `;` 병렬 브로드캐스트
+- `; seq` / `; seq:` 순차 브로드캐스트
+- 두 봇 동시 멘션 브로드캐스트
+- `; team` / `; team:` 협업 모드
+- `/model` 제어 명령
+
 `/model` 명령은 현재 프로세스용 모델 override를 바꾸고, workspace 아래 `bot_models.json`에 저장됩니다.
 
 ## 8. 실제 동작 방식
 
-브로드캐스트 시 실행 순서:
+### 8.1 기본 브로드캐스트
+
+1. 대상 두 봇을 동시에 실행
+2. 각 봇에 같은 사용자 요청 + 최근 `context.md`를 전달
+3. 각 봇은 서로의 출력을 보지 않음
+4. 각 봇 응답을 텔레그램으로 개별 전송
+
+### 8.2 team 모드
+
+1. 대상 두 봇을 동시에 실행
+2. priority 1 봇의 1차 응답만 텔레그램으로 전송
+3. 두 1차 응답(또는 실패 노트)을 함께 모아 team 통합 프롬프트 생성
+4. priority 2 봇이 최종 통합 답변을 생성
+5. 최종 통합 답변을 텔레그램으로 전송
+
+### 8.3 순차 브로드캐스트
 
 1. priority 1 봇 실행
 2. priority 1 응답을 텔레그램으로 전송
-3. priority 1 응답을 메모리에 보관
-4. priority 2 봇 실행 시 다음 컨텍스트를 함께 주입
-   - 원본 사용자 메시지
-   - 최근 `context.md`
-   - priority 1 출력 또는 실패 노트
+3. priority 1 응답(또는 실패 노트)을 다음 봇 프롬프트에 포함
+4. priority 2 봇이 후속 응답 생성
 5. priority 2 응답을 텔레그램으로 전송
+
+## 8.5 개발 가드레일
+
+Python 모듈 길이 점검:
+
+```bash
+python -m telegram_pair.module_size_guard
+```
+
+설치형 entrypoint도 사용할 수 있습니다:
+
+```bash
+telegram-pair-module-size
+```
+
+기본 정책:
+- 400줄 이상: 경고
+- 500줄 초과: 모듈화 필요로 간주
+
+선제 분리안은 `docs/module-boundaries.md`를 참고하세요.
 
 ## 9. 무시되는 메시지
 
@@ -221,7 +303,7 @@ Codex만 호출:
 - 봇이 보낸 메시지
 - 텍스트/캡션이 없는 업데이트
 - 트리거가 없는 일반 메시지
-- Telegram 슬래시 명령(`/start`, `/help`, `/start@bot`)
+- 일반 Telegram 슬래시 명령(`/start`, `/start@bot`)
 - mention 제거 후 빈 문자열이 되는 메시지
 - `TELEGRAM_PAIR_TARGET_CHAT_ID`와 다른 채팅에서 온 메시지
 

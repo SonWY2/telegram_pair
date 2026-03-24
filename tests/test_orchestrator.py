@@ -5,7 +5,7 @@ from pathlib import Path
 
 from telegram_pair.config import BotConfig, RuntimeConfig
 from telegram_pair.context_manager import ContextManager
-from telegram_pair.models import CliResult, RouteDecision, RouteMode
+from telegram_pair.models import BroadcastStrategy, CliResult, RouteDecision, RouteMode
 from telegram_pair.orchestrator import PairOrchestrator, render_result_for_telegram
 
 
@@ -71,7 +71,48 @@ async def test_single_route_calls_one_cli_and_send(tmp_path: Path) -> None:
     assert sends == [("ClaudeCodeBot", 123, "done")]
 
 
-async def test_broadcast_route_injects_first_output_into_second_prompt(tmp_path: Path) -> None:
+async def test_parallel_broadcast_runs_bots_concurrently_without_cross_injection(tmp_path: Path) -> None:
+    requests = []
+    sends = []
+    active = 0
+    max_active = 0
+
+    async def fake_cli_runner(request):
+        nonlocal active, max_active
+        requests.append(request)
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.03)
+        active -= 1
+        return CliResult(bot_name=request.bot_name, ok=True, output=f"{request.bot_name} output", duration_seconds=0.03)
+
+    async def fake_send(bot_name: str, chat_id: int, text: str) -> None:
+        sends.append((bot_name, chat_id, text))
+
+    runtime = _runtime_config(tmp_path)
+    orchestrator = PairOrchestrator(runtime, ContextManager(runtime.context_md_path), fake_send, fake_cli_runner)
+
+    results = await orchestrator.handle_route(
+        chat_id=123,
+        message_id=11,
+        user_text="compare solutions",
+        route=RouteDecision(
+            mode=RouteMode.BROADCAST,
+            normalized_text="compare solutions",
+            target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
+            broadcast_strategy=BroadcastStrategy.PARALLEL,
+        ),
+    )
+
+    assert len(results) == 2
+    assert max_active == 2
+    assert [request.bot_name for request in requests] == ["ClaudeCodeBot", "CodexPairBot"]
+    assert all("compare solutions" in request.prompt for request in requests)
+    assert all("Independent bot outputs:" not in request.prompt for request in requests)
+    assert {send[0] for send in sends} == {"ClaudeCodeBot", "CodexPairBot"}
+
+
+async def test_sequential_broadcast_injects_first_output_into_second_prompt(tmp_path: Path) -> None:
     requests = []
     sends = []
 
@@ -82,31 +123,83 @@ async def test_broadcast_route_injects_first_output_into_second_prompt(tmp_path:
         return CliResult(bot_name=request.bot_name, ok=True, output="second output", duration_seconds=0.01)
 
     async def fake_send(bot_name: str, chat_id: int, text: str) -> None:
-        sends.append((bot_name, text))
+        sends.append((bot_name, chat_id, text))
 
     runtime = _runtime_config(tmp_path)
     orchestrator = PairOrchestrator(runtime, ContextManager(runtime.context_md_path), fake_send, fake_cli_runner)
 
-    await orchestrator.handle_route(
+    results = await orchestrator.handle_route(
         chat_id=123,
-        message_id=11,
+        message_id=12,
         user_text="compare solutions",
         route=RouteDecision(
             mode=RouteMode.BROADCAST,
             normalized_text="compare solutions",
             target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
+            broadcast_strategy=BroadcastStrategy.SEQUENTIAL,
         ),
     )
 
-    assert [request.bot_name for request in requests] == ["ClaudeCodeBot", "CodexPairBot"]
+    assert len(results) == 2
+    assert [request.metadata["mode"] for request in requests] == [
+        "broadcast_sequential_first",
+        "broadcast_sequential_followup",
+    ]
+    assert "Broadcast coordination:" in requests[1].prompt
+    assert "ClaudeCodeBot output:" in requests[1].prompt
     assert "first output" in requests[1].prompt
-    assert "compare solutions" in requests[1].prompt
-    assert sends == [("ClaudeCodeBot", "first output"), ("CodexPairBot", "second output")]
+    assert sends == [
+        ("ClaudeCodeBot", 123, "first output"),
+        ("CodexPairBot", 123, "second output"),
+    ]
 
 
-async def test_broadcast_continues_after_first_failure(tmp_path: Path) -> None:
+async def test_team_route_runs_parallel_then_resolution(tmp_path: Path) -> None:
     requests = []
     sends = []
+
+    async def fake_cli_runner(request):
+        requests.append(request)
+        if request.metadata["mode"] == "team_resolution":
+            return CliResult(bot_name=request.bot_name, ok=True, output="final synthesis", duration_seconds=0.01)
+        return CliResult(bot_name=request.bot_name, ok=True, output=f"{request.bot_name} draft", duration_seconds=0.01)
+
+    async def fake_send(bot_name: str, chat_id: int, text: str) -> None:
+        sends.append((bot_name, chat_id, text))
+
+    runtime = _runtime_config(tmp_path)
+    orchestrator = PairOrchestrator(runtime, ContextManager(runtime.context_md_path), fake_send, fake_cli_runner)
+
+    results = await orchestrator.handle_route(
+        chat_id=456,
+        message_id=22,
+        user_text="비트코인 전망을 비교하고 토론해줘",
+        route=RouteDecision(
+            mode=RouteMode.BROADCAST,
+            normalized_text="비트코인 전망을 비교하고 토론해줘",
+            target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
+            broadcast_strategy=BroadcastStrategy.TEAM,
+        ),
+    )
+
+    assert len(results) == 3
+    assert [request.metadata["mode"] for request in requests] == [
+        "broadcast_parallel",
+        "broadcast_parallel",
+        "team_resolution",
+    ]
+    assert requests[-1].bot_name == "CodexPairBot"
+    assert "ClaudeCodeBot output:" in requests[-1].prompt
+    assert "CodexPairBot output:" in requests[-1].prompt
+    assert "final consolidated response" in requests[-1].prompt
+    assert sends == [
+        ("ClaudeCodeBot", 456, "ClaudeCodeBot draft"),
+        ("CodexPairBot", 456, "final synthesis"),
+    ]
+
+
+async def test_team_route_carries_failure_notes_into_resolution(tmp_path: Path) -> None:
+    requests = []
 
     async def fake_cli_runner(request):
         requests.append(request)
@@ -122,12 +215,12 @@ async def test_broadcast_continues_after_first_failure(tmp_path: Path) -> None:
         return CliResult(bot_name=request.bot_name, ok=True, output="codex recovered", duration_seconds=0.01)
 
     async def fake_send(bot_name: str, chat_id: int, text: str) -> None:
-        sends.append((bot_name, text))
+        return None
 
     runtime = _runtime_config(tmp_path)
     orchestrator = PairOrchestrator(runtime, ContextManager(runtime.context_md_path), fake_send, fake_cli_runner)
 
-    results = await orchestrator.handle_route(
+    await orchestrator.handle_route(
         chat_id=456,
         message_id=22,
         user_text="help me recover",
@@ -135,16 +228,13 @@ async def test_broadcast_continues_after_first_failure(tmp_path: Path) -> None:
             mode=RouteMode.BROADCAST,
             normalized_text="help me recover",
             target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
+            broadcast_strategy=BroadcastStrategy.TEAM,
         ),
     )
 
-    assert len(results) == 2
-    assert requests[1].bot_name == "CodexPairBot"
-    assert "Failure note:" in requests[1].prompt
-    assert "timeout" in requests[1].prompt
-    assert sends[0][0] == "ClaudeCodeBot"
-    assert "CLI error" in sends[0][1]
-    assert sends[1] == ("CodexPairBot", "codex recovered")
+    assert requests[-1].metadata["mode"] == "team_resolution"
+    assert "Failure notes:" in requests[-1].prompt
+    assert "timeout" in requests[-1].prompt
 
 
 async def test_orchestrator_serializes_same_chat(tmp_path: Path) -> None:
@@ -208,7 +298,7 @@ def test_render_result_for_telegram_keeps_error_text_untouched() -> None:
     assert "bkit Feature Usage appeared in stderr" in rendered
 
 
-async def test_model_command_status_and_set(tmp_path: Path) -> None:
+async def test_help_and_model_commands(tmp_path: Path) -> None:
     sends = []
 
     async def fake_send(bot_name: str, chat_id: int, text: str) -> None:
@@ -217,11 +307,20 @@ async def test_model_command_status_and_set(tmp_path: Path) -> None:
     runtime = _runtime_config(tmp_path)
     orchestrator = PairOrchestrator(runtime, ContextManager(runtime.context_md_path), fake_send)
 
-    handled = await orchestrator.handle_model_command(chat_id=1, command_text="/model status")
+    handled = await orchestrator.handle_app_command(chat_id=1, command_text="/help")
+    assert handled is True
+    assert "Telegram Pair 도움말" in sends[-1][2]
+    assert "이 함수 리팩터링해줘" in sends[-1][2]
+    assert "이 테스트 실패 원인 찾아줘" in sends[-1][2]
+    assert "; team 비트코인 전망을 각각 분석" in sends[-1][2]
+    assert "; seq 이 설계를 먼저 제안" in sends[-1][2]
+    assert "/help 와 /model만 앱 명령으로 처리" in sends[-1][2]
+
+    handled = await orchestrator.handle_app_command(chat_id=1, command_text="/model status")
     assert handled is True
     assert "현재 모델 설정:" in sends[-1][2]
 
-    handled = await orchestrator.handle_model_command(
+    handled = await orchestrator.handle_app_command(
         chat_id=1,
         command_text="/model codex gpt-5.4",
     )

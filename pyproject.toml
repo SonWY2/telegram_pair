@@ -21,6 +21,10 @@ dev = [
   "pytest-asyncio>=0.23,<0.25",
 ]
 
+[project.scripts]
+telegram-pair-module-size = "telegram_pair.module_size_guard:main"
+
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["telegram_pair*"]

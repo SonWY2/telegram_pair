@@ -9,7 +9,16 @@ from .cli_wrapper import run_cli
 from .config import BotConfig, RuntimeConfig
 from .context_manager import ContextManager
 from .model_registry import ModelRegistry
-from .models import BroadcastContext, CliRequest, CliResult, ConversationTurn, RouteDecision, RouteMode
+from .models import (
+    BroadcastContext,
+    BroadcastStrategy,
+    CliRequest,
+    CliResult,
+    ConversationTurn,
+    RouteDecision,
+    RouteMode,
+    TeamContext,
+)
 
 BKit_USAGE_MARKER = "bkit Feature Usage"
 LOGGER = logging.getLogger(__name__)
@@ -86,35 +95,27 @@ class PairOrchestrator:
             )
             return [result]
 
-        results: list[CliResult] = []
-        first_bot = bots[0]
-        first_result = await self._run_bot_with_progress(
-            bot=first_bot,
+        strategy = route.broadcast_strategy or BroadcastStrategy.PARALLEL
+        if strategy is BroadcastStrategy.TEAM:
+            return await self._handle_team_route(
+                bots=bots,
+                chat_id=chat_id,
+                user_text=user_text,
+                context_excerpt=context_excerpt,
+            )
+        if strategy is BroadcastStrategy.SEQUENTIAL:
+            return await self._handle_sequential_broadcast_route(
+                bots=bots,
+                chat_id=chat_id,
+                user_text=user_text,
+                context_excerpt=context_excerpt,
+            )
+        return await self._handle_parallel_broadcast_route(
+            bots=bots,
             chat_id=chat_id,
-            progress_text=f"⏳ {first_bot.name} 작업을 시작합니다...",
             user_text=user_text,
             context_excerpt=context_excerpt,
         )
-        results.append(first_result)
-
-        broadcast_context = BroadcastContext(
-            original_user_text=user_text,
-            first_bot_name=first_bot.name,
-            first_bot_output=first_result.output if first_result.ok else "",
-            failure_note=None if first_result.ok else self._failure_note(first_result),
-        )
-
-        for bot in bots[1:]:
-            result = await self._run_bot_with_progress(
-                bot=bot,
-                chat_id=chat_id,
-                progress_text=f"⏳ {bot.name} 작업을 시작합니다... (이전 봇 응답 반영)",
-                user_text=user_text,
-                context_excerpt=context_excerpt,
-                broadcast_context=broadcast_context,
-            )
-            results.append(result)
-        return results
 
     def _resolve_target_bots(self, route: RouteDecision) -> tuple[BotConfig, ...]:
         if route.mode is RouteMode.BROADCAST:
@@ -137,11 +138,15 @@ class PairOrchestrator:
         user_text: str,
         context_excerpt: str,
         broadcast_context: BroadcastContext | None = None,
+        team_context: TeamContext | None = None,
+        mode_label: str = "single",
+        emit_response: bool = True,
     ) -> CliResult:
         prompt = build_cli_prompt(
             user_text=user_text,
             context_excerpt=context_excerpt,
             broadcast_context=broadcast_context,
+            team_context=team_context,
         )
         request = CliRequest(
             bot_name=bot.name,
@@ -153,7 +158,7 @@ class PairOrchestrator:
             context_excerpt=context_excerpt,
             metadata={
                 "chat_id": chat_id,
-                "mode": "broadcast" if broadcast_context else "single",
+                "mode": mode_label,
             },
             model_override=self.model_registry.get_model(bot.name),
         )
@@ -174,15 +179,16 @@ class PairOrchestrator:
             result.error_type or "",
         )
         visible_text = render_result_for_telegram(result)
-        await self.send_message(bot.name, chat_id, visible_text)
-        self.context_manager.append_turn(
-            ConversationTurn(
-                speaker_type="bot",
-                speaker_name=bot.name,
-                text=visible_text,
-                chat_id=chat_id,
+        if emit_response:
+            await self.send_message(bot.name, chat_id, visible_text)
+            self.context_manager.append_turn(
+                ConversationTurn(
+                    speaker_type="bot",
+                    speaker_name=bot.name,
+                    text=visible_text,
+                    chat_id=chat_id,
+                )
             )
-        )
         return result
 
     async def _run_bot_with_progress(
@@ -194,11 +200,17 @@ class PairOrchestrator:
         user_text: str,
         context_excerpt: str,
         broadcast_context: BroadcastContext | None = None,
+        team_context: TeamContext | None = None,
+        mode_label: str = "single",
+        emit_response: bool = True,
+        emit_progress: bool = True,
     ) -> CliResult:
-        notice_task = asyncio.create_task(
-            self._maybe_send_progress_notice_after_delay(bot, chat_id, progress_text),
-            name=f"progress:{bot.name}:{chat_id}",
-        )
+        notice_task = None
+        if emit_progress:
+            notice_task = asyncio.create_task(
+                self._maybe_send_progress_notice_after_delay(bot, chat_id, progress_text),
+                name=f"progress:{bot.name}:{chat_id}",
+            )
         try:
             return await self._run_bot(
                 bot=bot,
@@ -206,13 +218,27 @@ class PairOrchestrator:
                 user_text=user_text,
                 context_excerpt=context_excerpt,
                 broadcast_context=broadcast_context,
+                team_context=team_context,
+                mode_label=mode_label,
+                emit_response=emit_response,
             )
         finally:
-            notice_task.cancel()
-            await asyncio.gather(notice_task, return_exceptions=True)
+            if notice_task is not None:
+                notice_task.cancel()
+                await asyncio.gather(notice_task, return_exceptions=True)
 
     def _failure_note(self, result: CliResult) -> str:
         return f"{result.bot_name} failed: {result.error_type or 'runtime_error'} - {result.error_message or 'unknown error'}"
+
+    async def handle_app_command(self, *, chat_id: int, command_text: str) -> bool:
+        if _is_help_command(command_text):
+            await self.send_message(
+                _control_reply_bot_name(self.runtime_config),
+                chat_id,
+                _render_help_text(self.runtime_config),
+            )
+            return True
+        return await self.handle_model_command(chat_id=chat_id, command_text=command_text)
 
     async def handle_model_command(self, *, chat_id: int, command_text: str) -> bool:
         parsed = _parse_model_command(command_text)
@@ -287,20 +313,129 @@ class PairOrchestrator:
             lines.append(f"- {bot.name}: {snapshot.get(bot.name) or '(default)'}")
         return "\n".join(lines)
 
+    async def _handle_parallel_broadcast_route(
+        self,
+        *,
+        bots: tuple[BotConfig, ...],
+        chat_id: int,
+        user_text: str,
+        context_excerpt: str,
+        hidden_bot_names: frozenset[str] | None = None,
+    ) -> list[CliResult]:
+        hidden_bot_names = hidden_bot_names or frozenset()
+        tasks = [
+            asyncio.create_task(
+                self._run_bot_with_progress(
+                    bot=bot,
+                    chat_id=chat_id,
+                    progress_text=f"⏳ {bot.name} 작업을 시작합니다...",
+                    user_text=user_text,
+                    context_excerpt=context_excerpt,
+                    mode_label="broadcast_parallel",
+                    emit_response=bot.name not in hidden_bot_names,
+                    emit_progress=bot.name not in hidden_bot_names,
+                ),
+                name=f"broadcast:{bot.name}:{chat_id}",
+            )
+            for bot in bots
+        ]
+        return list(await asyncio.gather(*tasks))
+
+    async def _handle_sequential_broadcast_route(
+        self,
+        *,
+        bots: tuple[BotConfig, ...],
+        chat_id: int,
+        user_text: str,
+        context_excerpt: str,
+    ) -> list[CliResult]:
+        results: list[CliResult] = []
+        first_bot = bots[0]
+        first_result = await self._run_bot_with_progress(
+            bot=first_bot,
+            chat_id=chat_id,
+            progress_text=f"⏳ {first_bot.name} 작업을 시작합니다...",
+            user_text=user_text,
+            context_excerpt=context_excerpt,
+            mode_label="broadcast_sequential_first",
+        )
+        results.append(first_result)
+
+        broadcast_context = BroadcastContext(
+            original_user_text=user_text,
+            first_bot_name=first_bot.name,
+            first_bot_output=first_result.output if first_result.ok else "",
+            failure_note=None if first_result.ok else self._failure_note(first_result),
+        )
+        for bot in bots[1:]:
+            result = await self._run_bot_with_progress(
+                bot=bot,
+                chat_id=chat_id,
+                progress_text=f"⏳ {bot.name} 검토 응답을 준비합니다...",
+                user_text=user_text,
+                context_excerpt=context_excerpt,
+                broadcast_context=broadcast_context,
+                mode_label="broadcast_sequential_followup",
+            )
+            results.append(result)
+        return results
+
+    async def _handle_team_route(
+        self,
+        *,
+        bots: tuple[BotConfig, ...],
+        chat_id: int,
+        user_text: str,
+        context_excerpt: str,
+    ) -> list[CliResult]:
+        integration_bot = bots[-1]
+        first_stage_results = await self._handle_parallel_broadcast_route(
+            bots=bots,
+            chat_id=chat_id,
+            user_text=user_text,
+            context_excerpt=context_excerpt,
+            hidden_bot_names=frozenset({integration_bot.name}),
+        )
+        team_context = TeamContext(
+            original_user_text=user_text,
+            bot_outputs=tuple(
+                (result.bot_name, result.output if result.ok else "")
+                for result in first_stage_results
+            ),
+            failure_notes=tuple(
+                self._failure_note(result)
+                for result in first_stage_results
+                if not result.ok
+            ),
+        )
+        team_result = await self._run_bot_with_progress(
+            bot=integration_bot,
+            chat_id=chat_id,
+            progress_text=f"⏳ {integration_bot.name} 팀 통합 응답을 준비합니다...",
+            user_text=user_text,
+            context_excerpt=context_excerpt,
+            team_context=team_context,
+            mode_label="team_resolution",
+        )
+        return [*first_stage_results, team_result]
+
 
 def build_cli_prompt(
     *,
     user_text: str,
     context_excerpt: str,
     broadcast_context: BroadcastContext | None = None,
+    team_context: TeamContext | None = None,
 ) -> str:
     sections: list[str] = []
     if context_excerpt.strip():
         sections.extend(["Recent conversation context:", context_excerpt.strip()])
-    if broadcast_context is None:
-        sections.extend(["User request:", user_text.strip()])
-    else:
+    if team_context is not None:
+        sections.extend(["Team coordination:", team_context.render_for_team_resolution()])
+    elif broadcast_context is not None:
         sections.extend(["Broadcast coordination:", broadcast_context.render_for_second_bot()])
+    else:
+        sections.extend(["User request:", user_text.strip()])
     return "\n\n".join(section for section in sections if section.strip())
 
 
@@ -335,6 +470,11 @@ def _parse_model_command(text: str) -> tuple[str, str | None, str | None] | None
     if len(parts) >= 3:
         return ("set", parts[1].lower(), " ".join(parts[2:]).strip())
     return ("help", None, None)
+
+
+def _is_help_command(text: str) -> bool:
+    lowered = text.strip().lower()
+    return lowered == "/help" or lowered.startswith("/help@")
 
 
 def _resolve_model_targets(runtime_config: RuntimeConfig, target: str | None) -> tuple[str, ...]:
@@ -375,4 +515,27 @@ def _render_model_help() -> str:
         "/model codex <model>\n"
         "/model all <model>\n"
         "/model reset claude|codex|all"
+    )
+
+
+def _render_help_text(runtime_config: RuntimeConfig) -> str:
+    claude = runtime_config.bot_configs[0].canonical_mention
+    codex = runtime_config.bot_configs[1].canonical_mention
+    return (
+        "Telegram Pair 도움말\n\n"
+        "1) 단일 호출\n"
+        f"- {claude} 이 함수 리팩터링해줘\n"
+        f"- {codex} 이 테스트 실패 원인 찾아줘\n\n"
+        "2) 두 봇 함께 호출\n"
+        "- 병렬 비교: ; 이 구현 대안을 비교해줘\n"
+        f"- 두 봇 동시 멘션도 동일: {claude} {codex} 이 구현 대안을 비교해줘\n"
+        "- 순차 검토: ; seq 이 설계를 먼저 제안하고 그다음 보완해줘\n"
+        "- 팀 협업: ; team 비트코인 전망을 각각 분석하고 마지막에 결론 내줘\n\n"
+        "3) 모델 제어\n"
+        "- /model status\n"
+        "- /model claude <model>\n"
+        "- /model codex <model>\n"
+        "- /model all <model>\n"
+        "- /model reset claude|codex|all\n\n"
+        "팁: 일반 Telegram 명령(/start 등)은 무시되고, /help 와 /model만 앱 명령으로 처리됩니다."
     )

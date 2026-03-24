@@ -176,7 +176,7 @@ async def test_routed_processor_calls_orchestrator_with_normalized_text(tmp_path
     calls = []
 
     class FakeOrchestrator:
-        async def handle_model_command(self, **kwargs):
+        async def handle_app_command(self, **kwargs):
             return False
 
         async def handle_route(self, **kwargs):
@@ -208,7 +208,7 @@ async def test_routed_processor_skips_non_target_chat(tmp_path: Path):
     calls = []
 
     class FakeOrchestrator:
-        async def handle_model_command(self, **kwargs):
+        async def handle_app_command(self, **kwargs):
             return False
 
         async def handle_route(self, **kwargs):
@@ -236,7 +236,7 @@ async def test_routed_processor_ignores_telegram_slash_commands(tmp_path: Path):
     calls = []
 
     class FakeOrchestrator:
-        async def handle_model_command(self, **kwargs):
+        async def handle_app_command(self, **kwargs):
             return False
 
         async def handle_route(self, **kwargs):
@@ -260,13 +260,13 @@ async def test_routed_processor_ignores_telegram_slash_commands(tmp_path: Path):
     assert calls == []
 
 
-async def test_routed_processor_handles_model_command_before_router(tmp_path: Path):
+async def test_routed_processor_handles_app_command_before_router(tmp_path: Path):
     route_calls = []
-    model_calls = []
+    app_calls = []
 
     class FakeOrchestrator:
-        async def handle_model_command(self, **kwargs):
-            model_calls.append(kwargs)
+        async def handle_app_command(self, **kwargs):
+            app_calls.append(kwargs)
             return True
 
         async def handle_route(self, **kwargs):
@@ -287,7 +287,7 @@ async def test_routed_processor_handles_model_command_before_router(tmp_path: Pa
         )
     )
 
-    assert len(model_calls) == 1
+    assert len(app_calls) == 1
     assert route_calls == []
 
 

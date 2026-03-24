@@ -4,11 +4,13 @@ import re
 from typing import Mapping, Sequence
 
 from .config import BotConfig
-from .models import RouteDecision, RouteMode
+from .models import BroadcastStrategy, RouteDecision, RouteMode
 
 
 MENTION_PATTERN_TEMPLATE = r"(?<!\w){alias}(?!\w)"
 TELEGRAM_COMMAND_PATTERN = re.compile(r"^/[A-Za-z0-9_]+(?:@[A-Za-z0-9_]+)?(?:\s|$)")
+TEAM_PREFIX_PATTERN = re.compile(r"^team(?::|\s+|$)(?P<body>.*)$", flags=re.IGNORECASE | re.DOTALL)
+SEQUENTIAL_PREFIX_PATTERN = re.compile(r"^(?:seq|sequential)(?::|\s+|$)(?P<body>.*)$", flags=re.IGNORECASE | re.DOTALL)
 
 
 def route_message(
@@ -23,9 +25,11 @@ def route_message(
 
     Rules:
     - bot-authored messages are always ignored
-    - `; message` broadcasts to all bots in priority order
+    - `; message` broadcasts to all bots in parallel
+    - `; seq ...` / `; seq: ...` run the sequential review workflow
+    - `; team ...` and `; team: ...` run the team workflow
     - a single bot mention targets only that bot
-    - mentions for both bots trigger broadcast in priority order
+    - mentions for both bots trigger the same broadcast mode as `;`
     - routed prompt text has trigger markers stripped
     """
     return _route_message_impl(
@@ -65,13 +69,14 @@ def _route_message_impl(
         return RouteDecision(mode=RouteMode.IGNORE, reason="telegram-command")
 
     if text.startswith(";"):
-        prompt_text = _normalize_prompt_text(text[1:], bot_aliases)
+        strategy, prompt_text = _parse_semicolon_command(text[1:], bot_aliases)
         if not prompt_text:
             return RouteDecision(mode=RouteMode.IGNORE, reason="empty-broadcast")
         return RouteDecision(
             mode=RouteMode.BROADCAST,
             target_bot_names=tuple(bot_order),
             normalized_text=prompt_text,
+            broadcast_strategy=strategy,
             reason="semicolon",
         )
 
@@ -85,6 +90,7 @@ def _route_message_impl(
             mode=RouteMode.BROADCAST,
             target_bot_names=tuple(mentioned_bots),
             normalized_text=prompt_text,
+            broadcast_strategy=BroadcastStrategy.PARALLEL,
             reason="dual-mention",
         )
     if len(mentioned_bots) == 1:
@@ -112,6 +118,26 @@ def _find_mentioned_bots(
 
 def _contains_alias(text: str, alias: str) -> bool:
     return re.search(_mention_pattern(alias), text, flags=re.IGNORECASE) is not None
+
+
+def _parse_semicolon_command(
+    text: str,
+    bot_aliases: Mapping[str, Sequence[str]],
+) -> tuple[BroadcastStrategy, str]:
+    stripped = text.strip()
+    match = TEAM_PREFIX_PATTERN.match(stripped)
+    if match is not None:
+        return (
+            BroadcastStrategy.TEAM,
+            _normalize_prompt_text(match.group("body") or "", bot_aliases),
+        )
+    match = SEQUENTIAL_PREFIX_PATTERN.match(stripped)
+    if match is not None:
+        return (
+            BroadcastStrategy.SEQUENTIAL,
+            _normalize_prompt_text(match.group("body") or "", bot_aliases),
+        )
+    return (BroadcastStrategy.PARALLEL, _normalize_prompt_text(stripped, bot_aliases))
 
 
 def _normalize_prompt_text(text: str, bot_aliases: Mapping[str, Sequence[str]]) -> str:

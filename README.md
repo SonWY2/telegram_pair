@@ -17,7 +17,9 @@ This lane establishes the project skeleton plus typed runtime/config primitives 
 - One Python process owns both Telegram bot tokens.
 - One shared orchestrator decides whether a message is ignored, routed to one bot, or broadcast to both bots.
 - One shared `context.md` file stores conversation history on the local filesystem.
-- Broadcast mode runs priority 1 first, then injects bot 1 output into bot 2 input.
+- `; message` and dual-mention broadcast run both bots in parallel.
+- `; seq message` and `; seq: message` run priority 1 first, then feed that output into priority 2 for a sequential follow-up.
+- `; team message` and `; team: message` run both bots in parallel, then ask the priority 2 bot to consolidate the discussion; the priority 2 first-pass reply stays internal.
 
 ## Quick start
 
@@ -34,12 +36,16 @@ This lane establishes the project skeleton plus typed runtime/config primitives 
 - `@ClaudeCodeBot hello`
 - `@CodexPairBot hello`
 - `; compare two approaches`
-- `@ClaudeCodeBot @CodexPairBot propose then refine`
+- `@ClaudeCodeBot @CodexPairBot compare two approaches`
+- `; seq compare then critique two approaches`
+- `; team compare two approaches`
+- `; team: compare two approaches`
 
 ## Operator notes
 
 - Bot-authored messages must never retrigger orchestration.
-- Broadcast replies are best-effort: if bot 1 fails, bot 2 should still run with an injected failure note.
+- Parallel/team replies are best-effort: if one bot fails, the other bot should still reply.
+- Team mode still performs the final consolidation step with failure notes when one first-pass bot fails.
 - `context.md` is shared and append-only in normal operation.
 - Disable Telegram privacy mode on both bots if semicolon broadcast should work on ordinary group messages.
 
@@ -82,12 +88,20 @@ telegram_pair/
 
 - The bot sends an in-chat progress notice only when a Claude/Codex run stays active longer than the configured delay (default: 10 seconds).
 - Runtime logs include route decisions plus CLI start/finish lines with durations.
-- Telegram slash commands like `/start` are ignored, while `/model ...` is handled as an app control command.
+- Telegram slash commands like `/start` are ignored, while `/help` and `/model ...` are handled as app control commands.
 
-## Model control from Telegram
+## Development guardrail
+
+- Run `python -m telegram_pair.module_size_guard` to inspect Python module sizes.
+- Warning starts at 400 lines; failure starts above 500 lines.
+- An installed editable environment also exposes `telegram-pair-module-size`.
+- See `docs/module-boundaries.md` for the current pre-modularization plan.
+
+## Telegram commands
 
 Supported commands:
 
+- `/help`
 - `/model status`
 - `/model claude <model>`
 - `/model codex <model>`

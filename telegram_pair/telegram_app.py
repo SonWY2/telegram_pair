@@ -219,12 +219,12 @@ class RoutedTelegramMessageProcessor:
             )
             return
 
-        if await self._orchestrator.handle_model_command(
+        if await self._orchestrator.handle_app_command(
             chat_id=inbound.chat_id,
             command_text=inbound.text,
         ):
             self._logger.info(
-                "Handled model command chat_id=%s message_id=%s text=%r",
+                "Handled app command chat_id=%s message_id=%s text=%r",
                 inbound.chat_id,
                 inbound.message_id,
                 inbound.text,

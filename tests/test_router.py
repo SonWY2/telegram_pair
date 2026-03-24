@@ -1,5 +1,5 @@
 from telegram_pair.config import BotConfig
-from telegram_pair.models import RouteDecision, RouteMode
+from telegram_pair.models import BroadcastStrategy, RouteDecision, RouteMode
 from telegram_pair.router import route_message, route_message_from_bot_configs
 
 
@@ -40,7 +40,7 @@ def test_single_codex_mention_routes_to_codex() -> None:
     )
 
 
-def test_semicolon_routes_to_broadcast_in_priority_order() -> None:
+def test_semicolon_routes_to_parallel_broadcast() -> None:
     decision = route_message(
         "; compare two implementations",
         bot_aliases=BOT_ALIASES,
@@ -51,11 +51,76 @@ def test_semicolon_routes_to_broadcast_in_priority_order() -> None:
         mode=RouteMode.BROADCAST,
         target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
         normalized_text="compare two implementations",
+        broadcast_strategy=BroadcastStrategy.PARALLEL,
         reason="semicolon",
     )
 
 
-def test_dual_mentions_route_to_broadcast_in_priority_order() -> None:
+def test_semicolon_team_routes_to_team_strategy() -> None:
+    decision = route_message(
+        "; team compare two implementations",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision == RouteDecision(
+        mode=RouteMode.BROADCAST,
+        target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
+        normalized_text="compare two implementations",
+        broadcast_strategy=BroadcastStrategy.TEAM,
+        reason="semicolon",
+    )
+
+
+def test_semicolon_seq_routes_to_sequential_strategy() -> None:
+    decision = route_message(
+        "; seq compare two implementations",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision == RouteDecision(
+        mode=RouteMode.BROADCAST,
+        target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
+        normalized_text="compare two implementations",
+        broadcast_strategy=BroadcastStrategy.SEQUENTIAL,
+        reason="semicolon",
+    )
+
+
+def test_semicolon_seq_colon_routes_to_sequential_strategy() -> None:
+    decision = route_message(
+        "; seq: compare two implementations",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision == RouteDecision(
+        mode=RouteMode.BROADCAST,
+        target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
+        normalized_text="compare two implementations",
+        broadcast_strategy=BroadcastStrategy.SEQUENTIAL,
+        reason="semicolon",
+    )
+
+
+def test_semicolon_team_colon_routes_to_team_strategy() -> None:
+    decision = route_message(
+        "; team: compare two implementations",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision == RouteDecision(
+        mode=RouteMode.BROADCAST,
+        target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
+        normalized_text="compare two implementations",
+        broadcast_strategy=BroadcastStrategy.TEAM,
+        reason="semicolon",
+    )
+
+
+def test_dual_mentions_route_to_parallel_broadcast() -> None:
     decision = route_message(
         "@CodexPairBot @ClaudeCodeBot propose then refine",
         bot_aliases=BOT_ALIASES,
@@ -66,6 +131,7 @@ def test_dual_mentions_route_to_broadcast_in_priority_order() -> None:
         mode=RouteMode.BROADCAST,
         target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
         normalized_text="propose then refine",
+        broadcast_strategy=BroadcastStrategy.PARALLEL,
         reason="dual-mention",
     )
 
@@ -91,6 +157,50 @@ def test_empty_prompt_after_stripping_mentions_is_ignored() -> None:
 
     assert decision.mode is RouteMode.IGNORE
     assert decision.normalized_text == ""
+
+
+def test_empty_team_prompt_is_ignored() -> None:
+    decision = route_message(
+        "; team:",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision.mode is RouteMode.IGNORE
+    assert decision.reason == "empty-broadcast"
+
+
+def test_empty_seq_prompt_is_ignored() -> None:
+    decision = route_message(
+        "; seq:",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision.mode is RouteMode.IGNORE
+    assert decision.reason == "empty-broadcast"
+
+
+def test_bare_team_prompt_is_ignored() -> None:
+    decision = route_message(
+        "; team",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision.mode is RouteMode.IGNORE
+    assert decision.reason == "empty-broadcast"
+
+
+def test_bare_seq_prompt_is_ignored() -> None:
+    decision = route_message(
+        "; seq",
+        bot_aliases=BOT_ALIASES,
+        bot_order=BOT_ORDER,
+    )
+
+    assert decision.mode is RouteMode.IGNORE
+    assert decision.reason == "empty-broadcast"
 
 
 def test_telegram_slash_command_is_ignored() -> None:
@@ -155,5 +265,6 @@ def test_route_message_from_bot_configs_uses_priority_and_aliases() -> None:
         mode=RouteMode.BROADCAST,
         target_bot_names=("ClaudeCodeBot", "CodexPairBot"),
         normalized_text="refine this",
+        broadcast_strategy=BroadcastStrategy.PARALLEL,
         reason="dual-mention",
     )

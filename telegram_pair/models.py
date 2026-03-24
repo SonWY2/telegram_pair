@@ -13,11 +13,18 @@ class RouteMode(str, Enum):
     BROADCAST = "broadcast"
 
 
+class BroadcastStrategy(str, Enum):
+    PARALLEL = "parallel"
+    SEQUENTIAL = "sequential"
+    TEAM = "team"
+
+
 @dataclass(slots=True, frozen=True)
 class RouteDecision:
     mode: RouteMode
     normalized_text: str = ""
     target_bot_names: tuple[str, ...] = ()
+    broadcast_strategy: BroadcastStrategy | None = None
     reason: str = ""
 
     @property
@@ -42,6 +49,40 @@ class BroadcastContext:
         ]
         if self.failure_note:
             sections.extend(["", f"Failure note: {self.failure_note.strip()}"])
+        return "\n".join(sections).strip()
+
+
+@dataclass(slots=True, frozen=True)
+class TeamContext:
+    original_user_text: str
+    bot_outputs: tuple[tuple[str, str], ...]
+    failure_notes: tuple[str, ...] = ()
+
+    def render_for_team_resolution(self) -> str:
+        sections = [
+            "Team coordination request:",
+            self.original_user_text.strip(),
+            "",
+            "Independent bot outputs:",
+        ]
+        for bot_name, output in self.bot_outputs:
+            sections.extend(
+                [
+                    "",
+                    f"{bot_name} output:",
+                    output.strip() or "<no output>",
+                ]
+            )
+        if self.failure_notes:
+            sections.extend(["", "Failure notes:"])
+            sections.extend(f"- {note.strip()}" for note in self.failure_notes if note.strip())
+        sections.extend(
+            [
+                "",
+                "Produce a final consolidated response that compares the positions, explains disagreements, "
+                "and recommends the best next answer for the user.",
+            ]
+        )
         return "\n".join(sections).strip()
 
 
