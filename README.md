@@ -80,7 +80,7 @@ telegram_pair/
 
 ## Progress UX
 
-- The bot now sends an immediate in-chat progress notice before each Claude/Codex run.
+- The bot sends an in-chat progress notice only when a Claude/Codex run stays active longer than the configured delay (default: 10 seconds).
 - Runtime logs include route decisions plus CLI start/finish lines with durations.
 - Telegram slash commands like `/start` are ignored, while `/model ...` is handled as an app control command.
 

@@ -70,6 +70,7 @@ export CODEX_CLI_EXECUTABLE='codex'
 - `TELEGRAM_PAIR_TIMEOUT_SECONDS` — 기본값: `180`
 - `TELEGRAM_PAIR_MAX_CONTEXT_TURNS` — 기본값: `12`
 - `TELEGRAM_PAIR_DEDUP_TTL_SECONDS` — 기본값: `300`
+- `TELEGRAM_PAIR_PROGRESS_NOTICE_DELAY_SECONDS` — 기본값: `10` (이 시간 이상 걸릴 때만 진행 메시지 전송)
 - `TELEGRAM_PAIR_TARGET_CHAT_ID` — 특정 그룹/채팅만 처리하고 싶을 때 사용
 - `TELEGRAM_PAIR_LOG_LEVEL` — 기본값: `INFO`
 
@@ -161,7 +162,7 @@ Codex만 호출:
 
 ## 7.3 진행 상태 알림
 
-요청이 실제 작업으로 들어가면 봇은 먼저 짧은 진행 메시지를 보냅니다.
+요청이 실제 작업으로 들어간 뒤, 기본적으로 **10초 이상** 계속 실행 중일 때만 봇이 진행 메시지를 보냅니다.
 
 예:
 
@@ -174,6 +175,8 @@ Codex만 호출:
 ```text
 ⏳ CodexPairBot 작업을 시작합니다... (이전 봇 응답 반영)
 ```
+
+짧게 끝나는 작업은 이 진행 메시지가 생략됩니다. 지연값은 `TELEGRAM_PAIR_PROGRESS_NOTICE_DELAY_SECONDS`로 조절할 수 있습니다.
 
 터미널 로그에도 route / CLI 시작 / CLI 종료 / 소요시간이 기록됩니다.
 

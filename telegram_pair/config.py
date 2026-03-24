@@ -11,6 +11,7 @@ from typing import Mapping
 DEFAULT_TIMEOUT_SECONDS = 180
 DEFAULT_MAX_CONTEXT_TURNS = 12
 DEFAULT_DEDUP_TTL_SECONDS = 300
+DEFAULT_PROGRESS_NOTICE_DELAY_SECONDS = 10.0
 
 
 class ConfigError(ValueError):
@@ -57,6 +58,7 @@ class RuntimeConfig:
     timeout_seconds: int
     max_context_turns: int
     dedup_ttl_seconds: int
+    progress_notice_delay_seconds: float
     target_chat_id: int | None
     log_level: str
     bot_configs: tuple[BotConfig, ...]
@@ -70,6 +72,8 @@ class RuntimeConfig:
             raise ConfigError("TELEGRAM_PAIR_MAX_CONTEXT_TURNS must be > 0")
         if self.dedup_ttl_seconds <= 0:
             raise ConfigError("TELEGRAM_PAIR_DEDUP_TTL_SECONDS must be > 0")
+        if self.progress_notice_delay_seconds < 0:
+            raise ConfigError("TELEGRAM_PAIR_PROGRESS_NOTICE_DELAY_SECONDS must be >= 0")
         for bot in self.bot_configs:
             bot.validate()
 
@@ -107,6 +111,11 @@ def load_config(env: Mapping[str, str] | None = None) -> RuntimeConfig:
             values,
             "TELEGRAM_PAIR_DEDUP_TTL_SECONDS",
             DEFAULT_DEDUP_TTL_SECONDS,
+        ),
+        progress_notice_delay_seconds=_parse_float(
+            values,
+            "TELEGRAM_PAIR_PROGRESS_NOTICE_DELAY_SECONDS",
+            DEFAULT_PROGRESS_NOTICE_DELAY_SECONDS,
         ),
         target_chat_id=_parse_optional_int(values.get("TELEGRAM_PAIR_TARGET_CHAT_ID")),
         log_level=values.get("TELEGRAM_PAIR_LOG_LEVEL", "INFO").upper(),
@@ -238,3 +247,13 @@ def _parse_optional_int(raw: str | None) -> int | None:
         return int(raw)
     except ValueError as exc:
         raise ConfigError(f"TELEGRAM_PAIR_TARGET_CHAT_ID must be an integer, got: {raw!r}") from exc
+
+
+def _parse_float(values: Mapping[str, str], key: str, default: float) -> float:
+    raw = values.get(key)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{key} must be a number, got: {raw!r}") from exc

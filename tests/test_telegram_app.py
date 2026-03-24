@@ -93,6 +93,7 @@ def build_runtime_config(tmp_path: Path, *, target_chat_id: int | None = None) -
         timeout_seconds=5,
         max_context_turns=6,
         dedup_ttl_seconds=90,
+        progress_notice_delay_seconds=10.0,
         target_chat_id=target_chat_id,
         log_level="INFO",
         bot_configs=(

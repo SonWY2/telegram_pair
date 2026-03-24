@@ -16,6 +16,7 @@ def _runtime_config(tmp_path: Path) -> RuntimeConfig:
         timeout_seconds=1,
         max_context_turns=6,
         dedup_ttl_seconds=60,
+        progress_notice_delay_seconds=10.0,
         target_chat_id=None,
         log_level="INFO",
         bot_configs=(
@@ -67,10 +68,7 @@ async def test_single_route_calls_one_cli_and_send(tmp_path: Path) -> None:
     assert len(results) == 1
     assert len(requests) == 1
     assert requests[0].bot_name == "ClaudeCodeBot"
-    assert sends == [
-        ("ClaudeCodeBot", 123, "⏳ ClaudeCodeBot 작업을 시작합니다..."),
-        ("ClaudeCodeBot", 123, "done"),
-    ]
+    assert sends == [("ClaudeCodeBot", 123, "done")]
 
 
 async def test_broadcast_route_injects_first_output_into_second_prompt(tmp_path: Path) -> None:
@@ -103,12 +101,7 @@ async def test_broadcast_route_injects_first_output_into_second_prompt(tmp_path:
     assert [request.bot_name for request in requests] == ["ClaudeCodeBot", "CodexPairBot"]
     assert "first output" in requests[1].prompt
     assert "compare solutions" in requests[1].prompt
-    assert sends == [
-        ("ClaudeCodeBot", "⏳ ClaudeCodeBot 작업을 시작합니다..."),
-        ("ClaudeCodeBot", "first output"),
-        ("CodexPairBot", "⏳ CodexPairBot 작업을 시작합니다... (이전 봇 응답 반영)"),
-        ("CodexPairBot", "second output"),
-    ]
+    assert sends == [("ClaudeCodeBot", "first output"), ("CodexPairBot", "second output")]
 
 
 async def test_broadcast_continues_after_first_failure(tmp_path: Path) -> None:
@@ -149,11 +142,9 @@ async def test_broadcast_continues_after_first_failure(tmp_path: Path) -> None:
     assert requests[1].bot_name == "CodexPairBot"
     assert "Failure note:" in requests[1].prompt
     assert "timeout" in requests[1].prompt
-    assert sends[0] == ("ClaudeCodeBot", "⏳ ClaudeCodeBot 작업을 시작합니다...")
-    assert sends[1][0] == "ClaudeCodeBot"
-    assert "CLI error" in sends[1][1]
-    assert sends[2] == ("CodexPairBot", "⏳ CodexPairBot 작업을 시작합니다... (이전 봇 응답 반영)")
-    assert sends[3] == ("CodexPairBot", "codex recovered")
+    assert sends[0][0] == "ClaudeCodeBot"
+    assert "CLI error" in sends[0][1]
+    assert sends[1] == ("CodexPairBot", "codex recovered")
 
 
 async def test_orchestrator_serializes_same_chat(tmp_path: Path) -> None:
@@ -237,3 +228,44 @@ async def test_model_command_status_and_set(tmp_path: Path) -> None:
     assert handled is True
     assert sends[-1] == ("CodexPairBot", 1, "모델 변경 완료: CodexPairBot -> gpt-5.4")
     assert orchestrator.model_registry.get_model("CodexPairBot") == "gpt-5.4"
+
+
+async def test_slow_single_route_emits_delayed_progress_notice(tmp_path: Path) -> None:
+    sends = []
+
+    async def fake_cli_runner(request):
+        await asyncio.sleep(0.03)
+        return CliResult(bot_name=request.bot_name, ok=True, output="done", duration_seconds=0.03)
+
+    async def fake_send(bot_name: str, chat_id: int, text: str) -> None:
+        sends.append((bot_name, chat_id, text))
+
+    runtime = _runtime_config(tmp_path)
+    runtime = RuntimeConfig(
+        workspace_dir=runtime.workspace_dir,
+        context_md_path=runtime.context_md_path,
+        timeout_seconds=runtime.timeout_seconds,
+        max_context_turns=runtime.max_context_turns,
+        dedup_ttl_seconds=runtime.dedup_ttl_seconds,
+        progress_notice_delay_seconds=0.01,
+        target_chat_id=runtime.target_chat_id,
+        log_level=runtime.log_level,
+        bot_configs=runtime.bot_configs,
+    )
+    orchestrator = PairOrchestrator(runtime, ContextManager(runtime.context_md_path), fake_send, fake_cli_runner)
+
+    await orchestrator.handle_route(
+        chat_id=77,
+        message_id=5,
+        user_text="hello",
+        route=RouteDecision(
+            mode=RouteMode.SINGLE,
+            normalized_text="hello",
+            target_bot_names=("ClaudeCodeBot",),
+        ),
+    )
+
+    assert sends == [
+        ("ClaudeCodeBot", 77, "⏳ ClaudeCodeBot 작업을 시작합니다..."),
+        ("ClaudeCodeBot", 77, "done"),
+    ]

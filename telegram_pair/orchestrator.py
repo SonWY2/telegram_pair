@@ -77,14 +77,10 @@ class PairOrchestrator:
 
         bots = self._resolve_target_bots(route)
         if route.mode is RouteMode.SINGLE:
-            await self._send_progress_notice(
-                bots[0],
-                chat_id,
-                f"⏳ {bots[0].name} 작업을 시작합니다...",
-            )
-            result = await self._run_bot(
+            result = await self._run_bot_with_progress(
                 bot=bots[0],
                 chat_id=chat_id,
+                progress_text=f"⏳ {bots[0].name} 작업을 시작합니다...",
                 user_text=user_text,
                 context_excerpt=context_excerpt,
             )
@@ -92,14 +88,10 @@ class PairOrchestrator:
 
         results: list[CliResult] = []
         first_bot = bots[0]
-        await self._send_progress_notice(
-            first_bot,
-            chat_id,
-            f"⏳ {first_bot.name} 작업을 시작합니다...",
-        )
-        first_result = await self._run_bot(
+        first_result = await self._run_bot_with_progress(
             bot=first_bot,
             chat_id=chat_id,
+            progress_text=f"⏳ {first_bot.name} 작업을 시작합니다...",
             user_text=user_text,
             context_excerpt=context_excerpt,
         )
@@ -113,14 +105,10 @@ class PairOrchestrator:
         )
 
         for bot in bots[1:]:
-            await self._send_progress_notice(
-                bot,
-                chat_id,
-                f"⏳ {bot.name} 작업을 시작합니다... (이전 봇 응답 반영)",
-            )
-            result = await self._run_bot(
+            result = await self._run_bot_with_progress(
                 bot=bot,
                 chat_id=chat_id,
+                progress_text=f"⏳ {bot.name} 작업을 시작합니다... (이전 봇 응답 반영)",
                 user_text=user_text,
                 context_excerpt=context_excerpt,
                 broadcast_context=broadcast_context,
@@ -197,6 +185,32 @@ class PairOrchestrator:
         )
         return result
 
+    async def _run_bot_with_progress(
+        self,
+        *,
+        bot: BotConfig,
+        chat_id: int,
+        progress_text: str,
+        user_text: str,
+        context_excerpt: str,
+        broadcast_context: BroadcastContext | None = None,
+    ) -> CliResult:
+        notice_task = asyncio.create_task(
+            self._maybe_send_progress_notice_after_delay(bot, chat_id, progress_text),
+            name=f"progress:{bot.name}:{chat_id}",
+        )
+        try:
+            return await self._run_bot(
+                bot=bot,
+                chat_id=chat_id,
+                user_text=user_text,
+                context_excerpt=context_excerpt,
+                broadcast_context=broadcast_context,
+            )
+        finally:
+            notice_task.cancel()
+            await asyncio.gather(notice_task, return_exceptions=True)
+
     def _failure_note(self, result: CliResult) -> str:
         return f"{result.bot_name} failed: {result.error_type or 'runtime_error'} - {result.error_message or 'unknown error'}"
 
@@ -249,6 +263,22 @@ class PairOrchestrator:
     async def _send_progress_notice(self, bot: BotConfig, chat_id: int, text: str) -> None:
         LOGGER.info("progress_notice bot=%s chat_id=%s text=%r", bot.name, chat_id, text)
         await self.send_message(bot.name, chat_id, text)
+
+    async def _maybe_send_progress_notice_after_delay(
+        self,
+        bot: BotConfig,
+        chat_id: int,
+        text: str,
+    ) -> None:
+        delay = self.runtime_config.progress_notice_delay_seconds
+        if delay <= 0:
+            await self._send_progress_notice(bot, chat_id, text)
+            return
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        await self._send_progress_notice(bot, chat_id, text)
 
     def _render_model_status(self) -> str:
         snapshot = self.model_registry.snapshot()
