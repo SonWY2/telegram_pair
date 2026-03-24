@@ -32,13 +32,13 @@
 ## 실제 유저 시나리오 예시
 
 ```text
-user: ; 우리 서비스 로그인 오류가 간헐적으로 나는데, 원인 후보랑 바로 해볼 수정 방향을 각각 말해줘
-bot: [ClaudeCodeBot] 인증 만료 처리와 UI 에러 표시가 분리돼 있을 가능성이 큽니다. 우선 401 응답 시점, 토큰 만료 로그, 사용자 재시도 패턴을 같이 확인해보는 게 좋습니다.
-bot: [CodexPairBot] 클라이언트 refresh 요청이 동시에 여러 번 발생하는 경쟁 상태일 수도 있습니다. auth client 쪽 중복 refresh 방지 로직과 retry 흐름을 먼저 점검하는 편이 빠릅니다.
-user: @CodexPairBot 그럼 코드 수정으로 바로 들어갈 수 있게 가장 작은 수정안만 추려줘
-bot: [CodexPairBot] refresh 요청을 단일 flight로 묶는 안이 가장 작습니다. 구현 포인트는 refresh promise 공유, 실패 시 대기열 해제, 만료 직후 재시도 1회 허용입니다.
-user: @ClaudeCodeBot 방금 수정안으로 갔을 때 운영 리스크도 같이 말해줘
-bot: [ClaudeCodeBot] refresh 실패 시 전체 요청이 한꺼번에 실패할 수 있어서 타임아웃과 강제 로그아웃 기준이 필요합니다. 로그에 refresh 시작, 성공, 실패를 남기지 않으면 운영 중 원인 추적도 어려워집니다.
+user: ; 배포 후 로그인 실패가 간헐적으로 발생해. 원인 후보를 먼저 나눠서 봐줘
+bot: [ClaudeCodeBot] 인증 토큰 만료 처리와 사용자 에러 메시지 노출이 서로 다르게 흘러가고 있을 가능성이 큽니다. 401 응답 시점, 재로그인 유도 여부, 세션 만료 로그를 같이 보는 게 좋습니다.
+bot: [CodexPairBot] 클라이언트에서 refresh 요청이 겹치면서 이전 토큰으로 API를 한 번 더 치는 경쟁 상태일 수 있습니다. auth client의 refresh 중복 방지와 재시도 흐름부터 확인하는 게 가장 빠릅니다.
+user: @CodexPairBot 바로 수정 들어갈 수 있게 최소 수정안만 적어줘
+bot: [CodexPairBot] refresh를 single-flight로 묶는 안이 가장 작습니다. refresh promise를 공유하고, 실패하면 대기 요청을 정리하고, 성공 시 원래 요청을 한 번만 재시도하게 두면 됩니다.
+user: @ClaudeCodeBot 이 수정안으로 갈 때 운영 리스크도 같이 말해줘
+bot: [ClaudeCodeBot] refresh endpoint 장애 시 대기 중인 요청이 한꺼번에 실패할 수 있습니다. timeout, 강제 로그아웃 기준, refresh 시작과 실패 로그를 같이 두지 않으면 운영 중 추적이 어려워집니다.
 ```
 
 ## 트리거 예시
