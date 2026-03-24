@@ -16,7 +16,7 @@
 
 - 하나의 Python 프로세스가 두 Telegram 봇 토큰을 함께 관리합니다.
 - 하나의 공용 오케스트레이터가 메시지를 무시할지, 한 봇으로만 보낼지, 두 봇 모두에게 브로드캐스트할지 결정합니다.
-- 하나의 공용 `context.md` 파일이 로컬 파일시스템에 대화 기록을 저장합니다.
+- 기본 `context.md` 설정을 기준으로 채팅별 context 파일을 분리 저장합니다.
 - `; message` 와 두 봇 동시 멘션은 두 봇을 병렬로 실행합니다.
 - `; seq message` 와 `; seq: message` 는 priority 1 봇을 먼저 실행하고, 그 출력을 priority 2 봇 후속 입력에 주입합니다.
 - `; team message` 와 `; team: message` 는 두 봇을 먼저 병렬 실행한 뒤 priority 2 봇이 최종 통합 답변을 생성합니다.
@@ -72,7 +72,9 @@ bot: [CodexPairBot] 1. 주문 상태별 취소 가능 조건 고정. 2. cancel_r
 - 봇이 작성한 메시지는 다시 오케스트레이션을 트리거하면 안 됩니다.
 - 병렬/팀 응답은 best-effort 방식입니다. 한 봇이 실패해도 다른 봇은 계속 응답해야 합니다.
 - team 모드는 한 1차 응답이 실패해도 실패 노트를 포함해 최종 통합 단계를 계속 시도합니다.
-- `context.md`는 일반 동작 기준으로 공용 append-only 로그처럼 사용됩니다.
+- context는 채팅별 append-only 로그로 저장되며, 각 채팅은 자기 기록만 다시 주입받습니다.
+- 기본 채팅별 경로는 `<context parent>/<context stem>/chat_<chat_id>.md` 입니다.
+- 필요하면 `TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE`로 채팅별 경로 규칙을 바꿀 수 있습니다.
 - 세미콜론 브로드캐스트를 일반 그룹 메시지에서 동작시키려면 두 봇의 Telegram privacy mode를 비활성화해야 합니다.
 
 ## 실패 동작
@@ -91,6 +93,7 @@ bot: [CodexPairBot] 1. 주문 상태별 취소 가능 조건 고정. 2. cancel_r
 - `CODEX_CLI_EXECUTABLE`
 - `TELEGRAM_PAIR_WORKSPACE_DIR`
 - `TELEGRAM_PAIR_CONTEXT_PATH` (선택)
+- `TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE` (선택)
 - `TELEGRAM_PAIR_TIMEOUT_SECONDS`
 - `TELEGRAM_PAIR_MAX_CONTEXT_TURNS`
 - `TELEGRAM_PAIR_DEDUP_TTL_SECONDS`
@@ -114,6 +117,36 @@ telegram_pair/
 - 봇은 Claude/Codex 실행이 설정된 지연 시간(기본값: 10초)보다 길어질 때만 채팅방에 진행 중 안내 메시지를 보냅니다.
 - 런타임 로그에는 라우팅 결정, CLI 시작/종료 시점, 실행 시간 정보가 함께 남습니다.
 - `/start` 같은 Telegram 슬래시 명령은 무시하고, `/help` 와 `/model ...` 은 앱 제어 명령으로 처리합니다.
+
+## TODO
+
+### MVP
+
+- [ ] Gemini CLI 연동 추가
+- [ ] OpenCode CLI 연동 추가
+- [ ] 2봇 고정 구조를 N봇 일반화 구조로 확장
+- [ ] `/health` 명령으로 CLI 설치/인증/모델 상태 점검 지원
+- [ ] `/status`, `/jobs` 명령으로 실행 중 작업 상태 조회 지원
+- [ ] `/cancel`, `/cancel latest` 등 실행 취소 지원
+- [x] 채팅별 context 분리 저장 지원
+- [ ] short-term memory와 long-term memory를 분리해 관리하는 메모리 계층 추가
+
+### Next
+
+- [ ] 특정 봇 집합만 대상으로 실행하는 라우팅 문법 추가
+- [ ] `; seq` 체인을 다단계 봇 파이프라인으로 확장
+- [ ] `; team`에서 최종 통합 담당 봇을 지정할 수 있게 개선
+- [ ] `/rerun`, `/retry` 등 최근 작업 재실행 지원
+- [ ] 장기 대화 자동 요약 및 context 압축 지원
+- [ ] workspace별 context 분리 및 전환 지원
+- [ ] 실행 로그 구조화 및 성능/실패율 관측 강화
+- [ ] 대화/export 결과를 Markdown 등으로 저장하는 기능 추가
+
+### Later
+
+- [ ] 봇별 역할 프리셋(설계/구현/리뷰/요약) 지원
+- [ ] consensus/diff 등 다중 봇 비교 결과 전용 모드 추가
+- [ ] 안전 모드(read-only, patch-only 등) 지원
 
 ## 개발 가드레일
 

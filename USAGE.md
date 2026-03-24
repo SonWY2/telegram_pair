@@ -67,6 +67,7 @@ export CODEX_CLI_EXECUTABLE='codex'
 - `CODEX_MODEL` — 시작 시 Codex 기본 모델 override (선택)
 - `TELEGRAM_PAIR_WORKSPACE_DIR` — 기본값: `./runtime`
 - `TELEGRAM_PAIR_CONTEXT_PATH` — 기본값: `<workspace>/context.md`
+- `TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE` — 기본값: `{base_stem}/chat_{chat_id}.md`
 - `TELEGRAM_PAIR_TIMEOUT_SECONDS` — 기본값: `180`
 - `TELEGRAM_PAIR_MAX_CONTEXT_TURNS` — 기본값: `12`
 - `TELEGRAM_PAIR_DEDUP_TTL_SECONDS` — 기본값: `300`
@@ -256,7 +257,7 @@ Codex만 호출:
 ### 8.1 기본 브로드캐스트
 
 1. 대상 두 봇을 동시에 실행
-2. 각 봇에 같은 사용자 요청 + 최근 `context.md`를 전달
+2. 각 봇에 같은 사용자 요청 + 현재 chat_id의 최근 context만 전달
 3. 각 봇은 서로의 출력을 보지 않음
 4. 각 봇 응답을 텔레그램으로 개별 전송
 
@@ -307,18 +308,24 @@ telegram-pair-module-size
 - mention 제거 후 빈 문자열이 되는 메시지
 - `TELEGRAM_PAIR_TARGET_CHAT_ID`와 다른 채팅에서 온 메시지
 
-## 10. context.md
+## 10. context
 
-기본적으로 대화 기록은 아래에 저장됩니다.
+기본 기준 경로는 아래입니다.
 
 ```text
 <workspace>/context.md
 ```
 
-예: `.env.example` 기본값이면:
+채팅별 실제 저장 파일 기본 규칙은 아래입니다.
 
 ```text
-telegram_pair/runtime/context.md
+<workspace>/context/chat_<chat_id>.md
+```
+
+예: `.env.example` 기본값이면 chat id가 `-1001234567890`일 때:
+
+```text
+telegram_pair/runtime/context/chat_-1001234567890.md
 ```
 
 저장 내용:
@@ -328,8 +335,18 @@ telegram_pair/runtime/context.md
 - chat_id / message_id 메타데이터
 - UTC timestamp
 
-CLI 호출 시 최근 `N`개 turn만 컨텍스트로 재주입됩니다.
+CLI 호출 시 최근 `N`개 turn만 같은 채팅 기준으로 재주입됩니다.
 `N`은 `TELEGRAM_PAIR_MAX_CONTEXT_TURNS`로 조절합니다.
+
+경로 규칙을 바꾸고 싶다면 `TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE`를 사용하세요.
+
+- 기본값: `{base_stem}/chat_{chat_id}.md`
+- 상대 경로는 `TELEGRAM_PAIR_CONTEXT_PATH`의 parent 기준으로 해석
+- 사용 가능한 placeholder:
+  - `{chat_id}`
+  - `{base_dir}`
+  - `{base_name}`
+  - `{base_stem}`
 
 ## 11. 중복 처리 방지
 
@@ -433,7 +450,7 @@ python -m telegram_pair.main
 
 - 처음에는 테스트용 그룹에서만 실행하세요.
 - `TELEGRAM_PAIR_TARGET_CHAT_ID`를 설정하면 실수로 다른 채팅을 처리하지 않습니다.
-- `runtime/context.md`를 주기적으로 백업하면 대화 흐름을 추적하기 쉽습니다.
+- `runtime/context/` 디렉터리를 주기적으로 백업하면 채팅별 대화 흐름을 추적하기 쉽습니다.
 - Claude는 보통 `CLAUDE_CLI_ARGS=-p`를 사용합니다.
 - Claude 응답에 `bkit Feature Usage` 라인이 나오면 그 줄부터 뒤는 자동으로 잘라냅니다.
 - Codex는 보통 `CODEX_CLI_ARGS=`(빈 값)으로 두고 wrapper가 `codex exec`를 자동 호출하게 두는 편이 안전합니다.

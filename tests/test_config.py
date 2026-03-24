@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from telegram_pair.config import load_config
+from telegram_pair.config import ConfigError, load_config
 
 
 def test_load_config_reads_dotenv_when_env_not_explicit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -89,3 +89,32 @@ def test_load_config_with_explicit_env_mapping_does_not_read_dotenv(
 
     assert config.get_bot("ClaudeCodeBot").telegram_token == "mapping-claude-token"
     assert config.get_bot("CodexPairBot").telegram_token == "mapping-codex-token"
+
+
+def test_load_config_reads_chat_context_path_template(tmp_path: Path) -> None:
+    config = load_config(
+        {
+            "TELEGRAM_TOKEN_CLAUDE": "claude-token",
+            "TELEGRAM_TOKEN_CODEX": "codex-token",
+            "CLAUDE_CLI_EXECUTABLE": "/bin/echo",
+            "CODEX_CLI_EXECUTABLE": "/bin/echo",
+            "TELEGRAM_PAIR_WORKSPACE_DIR": str(tmp_path / "runtime"),
+            "TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE": "chat-history/{chat_id}.md",
+        }
+    )
+
+    assert config.chat_context_path_template == "chat-history/{chat_id}.md"
+
+
+def test_load_config_rejects_unknown_chat_context_template_placeholder(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError):
+        load_config(
+            {
+                "TELEGRAM_TOKEN_CLAUDE": "claude-token",
+                "TELEGRAM_TOKEN_CODEX": "codex-token",
+                "CLAUDE_CLI_EXECUTABLE": "/bin/echo",
+                "CODEX_CLI_EXECUTABLE": "/bin/echo",
+                "TELEGRAM_PAIR_WORKSPACE_DIR": str(tmp_path / "runtime"),
+                "TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE": "chat-history/{unknown}.md",
+            }
+        )

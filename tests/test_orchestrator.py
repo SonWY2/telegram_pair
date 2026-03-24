@@ -13,6 +13,7 @@ def _runtime_config(tmp_path: Path) -> RuntimeConfig:
     return RuntimeConfig(
         workspace_dir=tmp_path,
         context_md_path=tmp_path / "context.md",
+        chat_context_path_template="{base_stem}/chat_{chat_id}.md",
         timeout_seconds=1,
         max_context_turns=6,
         dedup_ttl_seconds=60,
@@ -268,6 +269,34 @@ async def test_orchestrator_serializes_same_chat(tmp_path: Path) -> None:
     assert max_active == 1
 
 
+async def test_orchestrator_loads_context_only_from_same_chat(tmp_path: Path) -> None:
+    requests = []
+
+    async def fake_cli_runner(request):
+        requests.append(request)
+        return CliResult(bot_name=request.bot_name, ok=True, output="done", duration_seconds=0.01)
+
+    async def fake_send(bot_name: str, chat_id: int, text: str) -> None:
+        return None
+
+    runtime = _runtime_config(tmp_path)
+    orchestrator = PairOrchestrator(runtime, ContextManager(runtime.context_md_path), fake_send, fake_cli_runner)
+    route = RouteDecision(
+        mode=RouteMode.SINGLE,
+        normalized_text="hello",
+        target_bot_names=("ClaudeCodeBot",),
+    )
+
+    await orchestrator.handle_route(chat_id=100, message_id=1, user_text="chat one only", route=route)
+    await orchestrator.handle_route(chat_id=200, message_id=2, user_text="chat two only", route=route)
+    await orchestrator.handle_route(chat_id=100, message_id=3, user_text="chat one again", route=route)
+
+    assert requests[0].context_excerpt == ""
+    assert requests[1].context_excerpt == ""
+    assert "chat one only" in requests[2].context_excerpt
+    assert "chat two only" not in requests[2].context_excerpt
+
+
 def test_render_result_for_telegram_truncates_bkit_tail() -> None:
     result = CliResult(
         bot_name="ClaudeCodeBot",
@@ -343,6 +372,7 @@ async def test_slow_single_route_emits_delayed_progress_notice(tmp_path: Path) -
     runtime = RuntimeConfig(
         workspace_dir=runtime.workspace_dir,
         context_md_path=runtime.context_md_path,
+        chat_context_path_template=runtime.chat_context_path_template,
         timeout_seconds=runtime.timeout_seconds,
         max_context_turns=runtime.max_context_turns,
         dedup_ttl_seconds=runtime.dedup_ttl_seconds,

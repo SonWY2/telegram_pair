@@ -72,7 +72,8 @@ class PairOrchestrator:
         route: RouteDecision,
     ) -> list[CliResult]:
         context_excerpt = self.context_manager.load_recent_context_text(
-            self.runtime_config.max_context_turns
+            self.runtime_config.max_context_turns,
+            chat_id=chat_id,
         )
         self.context_manager.append_turn(
             ConversationTurn(

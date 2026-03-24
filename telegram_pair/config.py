@@ -55,6 +55,7 @@ class BotConfig:
 class RuntimeConfig:
     workspace_dir: Path
     context_md_path: Path
+    chat_context_path_template: str
     timeout_seconds: int
     max_context_turns: int
     dedup_ttl_seconds: int
@@ -66,6 +67,8 @@ class RuntimeConfig:
     def validate(self) -> None:
         if len(self.bot_configs) < 2:
             raise ConfigError("At least two bot configurations are required")
+        if not self.chat_context_path_template.strip():
+            raise ConfigError("TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE must not be empty")
         if self.timeout_seconds <= 0:
             raise ConfigError("TELEGRAM_PAIR_TIMEOUT_SECONDS must be > 0")
         if self.max_context_turns <= 0:
@@ -74,6 +77,17 @@ class RuntimeConfig:
             raise ConfigError("TELEGRAM_PAIR_DEDUP_TTL_SECONDS must be > 0")
         if self.progress_notice_delay_seconds < 0:
             raise ConfigError("TELEGRAM_PAIR_PROGRESS_NOTICE_DELAY_SECONDS must be >= 0")
+        try:
+            self.chat_context_path_template.format(
+                chat_id=0,
+                base_dir=str(self.context_md_path.parent),
+                base_name=self.context_md_path.name,
+                base_stem=self.context_md_path.stem,
+            )
+        except KeyError as exc:
+            raise ConfigError(
+                "TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE contains an unknown placeholder"
+            ) from exc
         for bot in self.bot_configs:
             bot.validate()
 
@@ -101,6 +115,11 @@ def load_config(env: Mapping[str, str] | None = None) -> RuntimeConfig:
     runtime = RuntimeConfig(
         workspace_dir=workspace_dir,
         context_md_path=context_md_path,
+        chat_context_path_template=values.get(
+            "TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE",
+            "{base_stem}/chat_{chat_id}.md",
+        ).strip()
+        or "{base_stem}/chat_{chat_id}.md",
         timeout_seconds=_parse_int(values, "TELEGRAM_PAIR_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
         max_context_turns=_parse_int(
             values,

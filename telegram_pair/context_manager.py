@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 import re
@@ -15,44 +16,82 @@ _HEADER_RE = re.compile(
 
 
 class ContextManager:
-    """Persist and load shared conversation history in markdown."""
+    """Persist and load conversation history in markdown, separated per chat when possible."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, chat_path_template: str = "{base_stem}/chat_{chat_id}.md") -> None:
         self.path = path
+        self.chat_path_template = chat_path_template
         self._lock = threading.Lock()
 
     def append_turn(self, turn: ConversationTurn) -> None:
         self.append_turns([turn])
 
     def append_turns(self, turns: Iterable[ConversationTurn]) -> None:
-        blocks = [turn.as_markdown_block().rstrip() for turn in turns]
-        if not blocks:
+        grouped_blocks: dict[int | None, list[str]] = defaultdict(list)
+        for turn in turns:
+            grouped_blocks[turn.chat_id].append(turn.as_markdown_block().rstrip())
+        if not grouped_blocks:
             return
 
         with self._lock:
-            existing = self.path.read_text(encoding="utf-8") if self.path.exists() else ""
-            body = existing.rstrip()
-            if body:
-                body += "\n\n"
-            body += "\n\n".join(blocks) + "\n"
-            self._atomic_write(body)
+            for chat_id, blocks in grouped_blocks.items():
+                self._append_blocks(self._storage_path(chat_id), blocks)
 
-    def load_recent_context(self, max_turns: int) -> tuple[ConversationTurn, ...]:
-        if max_turns <= 0 or not self.path.exists():
+    def load_recent_context(self, max_turns: int, *, chat_id: int | None = None) -> tuple[ConversationTurn, ...]:
+        if max_turns <= 0:
             return ()
-        text = self.path.read_text(encoding="utf-8")
-        parsed = _parse_turns(text)
-        return tuple(parsed[-max_turns:])
 
-    def load_recent_context_text(self, max_turns: int) -> str:
-        turns = self.load_recent_context(max_turns)
+        if chat_id is None:
+            parsed = self._read_turns_from_path(self.path)
+            return tuple(parsed[-max_turns:])
+
+        scoped_turns = self._read_turns_from_path(self._storage_path(chat_id))
+        if scoped_turns:
+            return tuple(scoped_turns[-max_turns:])
+
+        legacy_turns = [turn for turn in self._read_turns_from_path(self.path) if turn.chat_id == chat_id]
+        return tuple(legacy_turns[-max_turns:])
+
+    def load_recent_context_text(self, max_turns: int, *, chat_id: int | None = None) -> str:
+        turns = self.load_recent_context(max_turns, chat_id=chat_id)
         return format_recent_context(turns)
 
-    def _atomic_write(self, content: str) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = self.path.with_name(f"{self.path.name}.tmp")
+    def _append_blocks(self, path: Path, blocks: Iterable[str]) -> None:
+        materialized = [block for block in blocks if block]
+        if not materialized:
+            return
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+        body = existing.rstrip()
+        if body:
+            body += "\n\n"
+        body += "\n\n".join(materialized) + "\n"
+        self._atomic_write(path, body)
+
+    def _storage_path(self, chat_id: int | None) -> Path:
+        if chat_id is None:
+            return self.path
+        relative_or_absolute = Path(
+            self.chat_path_template.format(
+                chat_id=chat_id,
+                base_dir=str(self.path.parent),
+                base_name=self.path.name,
+                base_stem=self.path.stem,
+            )
+        )
+        if relative_or_absolute.is_absolute():
+            return relative_or_absolute
+        return self.path.parent / relative_or_absolute
+
+    def _read_turns_from_path(self, path: Path) -> list[ConversationTurn]:
+        if not path.exists():
+            return []
+        return _parse_turns(path.read_text(encoding="utf-8"))
+
+    def _atomic_write(self, path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.tmp")
         tmp_path.write_text(content, encoding="utf-8")
-        tmp_path.replace(self.path)
+        tmp_path.replace(path)
 
 
 def format_recent_context(turns: Iterable[ConversationTurn]) -> str:

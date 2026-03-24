@@ -303,7 +303,10 @@ def build_runtime(
 
     orchestrator = PairOrchestrator(
         runtime_config=runtime_config,
-        context_manager=ContextManager(runtime_config.context_md_path),
+        context_manager=ContextManager(
+            runtime_config.context_md_path,
+            chat_path_template=runtime_config.chat_context_path_template,
+        ),
         send_message=send_message,
         cli_runner=cli_runner if cli_runner is not None else run_cli,
     )

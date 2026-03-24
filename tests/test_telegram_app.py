@@ -90,6 +90,7 @@ def build_runtime_config(tmp_path: Path, *, target_chat_id: int | None = None) -
     return RuntimeConfig(
         workspace_dir=tmp_path,
         context_md_path=tmp_path / "context.md",
+        chat_context_path_template="{base_stem}/chat_{chat_id}.md",
         timeout_seconds=5,
         max_context_turns=6,
         dedup_ttl_seconds=90,
