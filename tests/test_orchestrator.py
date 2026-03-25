@@ -18,6 +18,7 @@ def _runtime_config(tmp_path: Path) -> RuntimeConfig:
         max_context_turns=6,
         dedup_ttl_seconds=60,
         progress_notice_delay_seconds=10.0,
+        force_context_restack=False,
         target_chat_id=None,
         log_level="INFO",
         bot_configs=(
@@ -377,6 +378,7 @@ async def test_slow_single_route_emits_delayed_progress_notice(tmp_path: Path) -
         max_context_turns=runtime.max_context_turns,
         dedup_ttl_seconds=runtime.dedup_ttl_seconds,
         progress_notice_delay_seconds=0.01,
+        force_context_restack=runtime.force_context_restack,
         target_chat_id=runtime.target_chat_id,
         log_level=runtime.log_level,
         bot_configs=runtime.bot_configs,

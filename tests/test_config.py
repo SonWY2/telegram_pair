@@ -118,3 +118,60 @@ def test_load_config_rejects_unknown_chat_context_template_placeholder(tmp_path:
                 "TELEGRAM_PAIR_CHAT_CONTEXT_PATH_TEMPLATE": "chat-history/{unknown}.md",
             }
         )
+
+
+def test_load_config_exposes_session_defaults_and_force_context_restack(tmp_path: Path) -> None:
+    config = load_config(
+        {
+            "TELEGRAM_TOKEN_CLAUDE": "claude-token",
+            "TELEGRAM_TOKEN_CODEX": "codex-token",
+            "CLAUDE_CLI_EXECUTABLE": "/bin/echo",
+            "CODEX_CLI_EXECUTABLE": "/bin/echo",
+            "TELEGRAM_PAIR_WORKSPACE_DIR": str(tmp_path / "runtime"),
+            "TELEGRAM_PAIR_FORCE_CONTEXT_RESTACK": "true",
+        }
+    )
+
+    claude = config.get_bot("ClaudeCodeBot")
+    codex = config.get_bot("CodexPairBot")
+
+    assert config.force_context_restack is True
+    assert claude.session_mode == "stateless"
+    assert claude.session_start_args == ()
+    assert claude.session_resume_args == ()
+    assert claude.session_output_format == "text"
+    assert codex.session_mode == "resume"
+    assert codex.session_start_args == ("exec", "--skip-git-repo-check", "--json")
+    assert codex.session_resume_args == ("exec", "resume", "--skip-git-repo-check", "--json")
+    assert codex.session_output_format == "json"
+
+
+def test_load_config_reads_session_override_env_keys(tmp_path: Path) -> None:
+    config = load_config(
+        {
+            "TELEGRAM_TOKEN_CLAUDE": "claude-token",
+            "TELEGRAM_TOKEN_CODEX": "codex-token",
+            "CLAUDE_CLI_EXECUTABLE": "/bin/echo",
+            "CODEX_CLI_EXECUTABLE": "/bin/echo",
+            "CLAUDE_BOT_NAME_SESSION_MODE": "resume",
+            "CLAUDE_BOT_NAME_SESSION_START_ARGS": "exec --json",
+            "CLAUDE_BOT_NAME_SESSION_RESUME_ARGS": "exec resume --json",
+            "CLAUDE_BOT_NAME_SESSION_OUTPUT_FORMAT": "json",
+            "CODEX_BOT_NAME_SESSION_MODE": "stateless",
+            "CODEX_BOT_NAME_SESSION_START_ARGS": "",
+            "CODEX_BOT_NAME_SESSION_RESUME_ARGS": "",
+            "CODEX_BOT_NAME_SESSION_OUTPUT_FORMAT": "text",
+        }
+    )
+
+    claude = config.get_bot("ClaudeCodeBot")
+    codex = config.get_bot("CodexPairBot")
+
+    assert claude.session_mode == "resume"
+    assert claude.session_start_args == ("exec", "--json")
+    assert claude.session_resume_args == ("exec", "resume", "--json")
+    assert claude.session_output_format == "json"
+    assert codex.session_mode == "stateless"
+    assert codex.session_start_args == ()
+    assert codex.session_resume_args == ()
+    assert codex.session_output_format == "text"

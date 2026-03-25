@@ -98,6 +98,7 @@ def build_runtime_config(tmp_path: Path, *, target_chat_id: int | None = None) -
         max_context_turns=6,
         dedup_ttl_seconds=90,
         progress_notice_delay_seconds=10.0,
+        force_context_restack=False,
         target_chat_id=target_chat_id,
         log_level="INFO",
         bot_configs=(
