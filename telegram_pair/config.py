@@ -65,9 +65,9 @@ class RuntimeConfig:
     dedup_ttl_seconds: int
     progress_notice_delay_seconds: float
     force_context_restack: bool = False
-    target_chat_id: int | None
-    log_level: str
-    bot_configs: tuple[BotConfig, ...]
+    target_chat_id: int | None = None
+    log_level: str = "INFO"
+    bot_configs: tuple[BotConfig, ...] = ()
 
     def validate(self) -> None:
         if len(self.bot_configs) < 2:
