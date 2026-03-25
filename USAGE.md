@@ -121,6 +121,18 @@ export TELEGRAM_PAIR_TARGET_CHAT_ID=-1001234567890
 ```bash
 cd telegram_pair
 source .venv/bin/activate
+telegram-pair
+```
+
+짧은 alias를 원하면:
+
+```bash
+tpair
+```
+
+기존 방식도 그대로 사용할 수 있습니다.
+
+```bash
 python -m telegram_pair.main
 ```
 
@@ -464,7 +476,7 @@ source .venv/bin/activate
 pip install -e .[dev]
 cp .env.example .env
 # .env 수정
-python -m telegram_pair.main
+telegram-pair
 ```
 
 이후 텔레그램 그룹에서:

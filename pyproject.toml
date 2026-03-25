@@ -22,6 +22,8 @@ dev = [
 ]
 
 [project.scripts]
+telegram-pair = "telegram_pair.main:main"
+tpair = "telegram_pair.main:main"
 telegram-pair-module-size = "telegram_pair.module_size_guard:main"
 
 

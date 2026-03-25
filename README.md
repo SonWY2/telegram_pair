@@ -26,6 +26,7 @@
 1. 가상환경을 만들고 활성화합니다.
 2. editable 모드로 패키지를 설치합니다.
    - `pip install -e .[dev]`
+   - 설치 후 봇 실행은 `telegram-pair` 또는 짧은 alias인 `tpair`로 할 수 있습니다.
 3. `.env.example`을 `telegram_pair/` 디렉터리의 `.env`로 복사합니다. 이 파일은 실행 시 자동으로 로드되며, 대신 셸에서 환경 변수를 직접 export해도 됩니다.
 4. 실제 로컬 래퍼 경로가 다르다면 `CLAUDE_CLI_EXECUTABLE`, `CODEX_CLI_EXECUTABLE` 값을 맞게 지정합니다.
 5. 추가 `codex exec` 옵션이 꼭 필요하지 않다면 `CODEX_CLI_ARGS`는 비워둡니다. 래퍼가 `exec`는 자동으로 붙입니다.
@@ -117,6 +118,13 @@ telegram_pair/
 - 봇은 Claude/Codex 실행이 설정된 지연 시간(기본값: 10초)보다 길어질 때만 채팅방에 진행 중 안내 메시지를 보냅니다.
 - 런타임 로그에는 라우팅 결정, CLI 시작/종료 시점, 실행 시간 정보가 함께 남습니다.
 - `/start` 같은 Telegram 슬래시 명령은 무시하고, `/help` 와 `/model ...` 은 앱 제어 명령으로 처리합니다.
+
+## 실행 명령 alias
+
+- `telegram-pair`
+- `tpair`
+
+둘 다 `python -m telegram_pair.main` 과 같은 진입점입니다.
 
 ## TODO
 
