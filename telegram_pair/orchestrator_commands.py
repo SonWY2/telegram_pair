@@ -241,5 +241,6 @@ def _render_help_text(runtime_config: RuntimeConfig) -> str:
         "- /session reset claude\n"
         "- /session reset codex\n"
         "- /session reset all\n\n"
-        "팁: 일반 Telegram 명령(/start 등)은 무시되고, /help /model /session만 앱 명령으로 처리됩니다."
+        "팁: 일반 Telegram 명령(/start 등)은 무시되고, /help 와 /model만 앱 명령으로 처리되며 "
+        "/session도 동일한 제어 명령으로 처리됩니다."
     )
