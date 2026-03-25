@@ -64,7 +64,7 @@ class RuntimeConfig:
     max_context_turns: int
     dedup_ttl_seconds: int
     progress_notice_delay_seconds: float
-    force_context_restack: bool
+    force_context_restack: bool = False
     target_chat_id: int | None
     log_level: str
     bot_configs: tuple[BotConfig, ...]
