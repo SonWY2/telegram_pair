@@ -125,6 +125,8 @@ telegram_pair/
 - [ ] Gemini CLI 연동 추가
 - [ ] OpenCode CLI 연동 추가
 - [ ] 2봇 고정 구조를 N봇 일반화 구조로 확장
+- [ ] OpenClaw식 채팅별 CLI 세션 재사용 도입
+- [ ] `codex` 우선 `resume` 경로와 세션 저장소(JSON or SQLite) 구현
 - [ ] `/health` 명령으로 CLI 설치/인증/모델 상태 점검 지원
 - [ ] `/status`, `/jobs` 명령으로 실행 중 작업 상태 조회 지원
 - [ ] `/cancel`, `/cancel latest` 등 실행 취소 지원
@@ -136,6 +138,8 @@ telegram_pair/
 - [ ] 특정 봇 집합만 대상으로 실행하는 라우팅 문법 추가
 - [ ] `; seq` 체인을 다단계 봇 파이프라인으로 확장
 - [ ] `; team`에서 최종 통합 담당 봇을 지정할 수 있게 개선
+- [ ] `.md` context를 transcript/fallback 역할로 축소하고, 정상 경로는 세션 resume 우선으로 전환
+- [ ] `/session status|reset` 명령 추가
 - [ ] `/rerun`, `/retry` 등 최근 작업 재실행 지원
 - [ ] 장기 대화 자동 요약 및 context 압축 지원
 - [ ] workspace별 context 분리 및 전환 지원
@@ -165,3 +169,7 @@ telegram_pair/
 - `/model codex <model>`
 - `/model all <model>`
 - `/model reset claude|codex|all`
+
+## 구현 가이드
+
+- OpenClaw식 세션 재사용 구현 가이드: [docs/openclaw-session-guide.md](/home/wy/workspace/telegram_pair/docs/openclaw-session-guide.md)
