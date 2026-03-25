@@ -96,6 +96,10 @@ class CliRequest:
     timeout_seconds: int
     model_override: str | None = None
     context_excerpt: str = ""
+    session_id: str | None = None
+    resume: bool = False
+    capture_session_id: bool = False
+    supports_structured_output: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -109,6 +113,10 @@ class CliResult:
     error_type: str | None = None
     error_message: str | None = None
     stderr: str = ""
+    session_id: str | None = None
+    session_reused: bool = False
+    session_broken: bool = False
+    raw_payload: str = ""
 
 
 @dataclass(slots=True, frozen=True)
