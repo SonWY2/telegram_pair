@@ -148,3 +148,61 @@ async def test_run_cli_strips_legacy_lone_codex_dash_p(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.output == '["exec", "--skip-git-repo-check", "hi"]'
+
+
+async def test_run_cli_extracts_agent_message_from_codex_jsonl_output(tmp_path: Path) -> None:
+    codex = tmp_path / "codex"
+    codex.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-123'}))\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'id': 'item_1', 'type': 'agent_message', 'text': 'hello from codex'}}))\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+    request = CliRequest(
+        bot_name="CodexPairBot",
+        executable=str(codex),
+        args=(),
+        prompt="hi",
+        cwd=tmp_path,
+        timeout_seconds=2,
+        supports_structured_output=True,
+        capture_session_id=True,
+    )
+
+    result = await run_cli(request)
+
+    assert result.ok is True
+    assert result.output == "hello from codex"
+    assert result.session_id == "thread-123"
+
+
+async def test_run_cli_does_not_leak_codex_json_events_when_no_message_text_exists(tmp_path: Path) -> None:
+    codex = tmp_path / "codex"
+    codex.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-456'}))\n"
+        "print(json.dumps({'type': 'turn.started'}))\n"
+        "print(json.dumps({'type': 'turn.completed'}))\n",
+        encoding="utf-8",
+    )
+    codex.chmod(0o755)
+    request = CliRequest(
+        bot_name="CodexPairBot",
+        executable=str(codex),
+        args=(),
+        prompt="hi",
+        cwd=tmp_path,
+        timeout_seconds=2,
+        supports_structured_output=True,
+        capture_session_id=True,
+    )
+
+    result = await run_cli(request)
+
+    assert result.ok is False
+    assert result.error_type == "empty_output"
+    assert '"thread.started"' not in result.output
+    assert result.session_id == "thread-456"

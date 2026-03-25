@@ -58,7 +58,7 @@ class CodexBackend(CliBackend):
                 session_broken=session_broken,
                 raw_payload=raw_payload,
             )
-        final_output = parsed_output or stdout
+        final_output = parsed_output if request.supports_structured_output else (parsed_output or stdout)
         if not final_output:
             return BackendSupport.error_result(
                 request,
@@ -108,7 +108,7 @@ def _parse_codex_output(stdout: str) -> tuple[str, str | None]:
     texts = [text for text in _collect_output_text(parsed) if text.strip()]
     if texts:
         return "\n\n".join(texts), session_id
-    return payload, session_id
+    return "", session_id
 
 
 def _parse_json_payload(payload: str) -> object | None:
@@ -130,7 +130,7 @@ def _parse_json_payload(payload: str) -> object | None:
 
 def _find_session_id(node: object) -> str | None:
     if isinstance(node, dict):
-        for key in ("session_id", "sessionId"):
+        for key in ("session_id", "sessionId", "thread_id", "threadId"):
             value = node.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
@@ -185,13 +185,13 @@ def _collect_output_text(node: object) -> Iterable[str]:
 def _looks_like_text_node(node: dict[str, object]) -> bool:
     kind = str(node.get("type", "")).lower()
     role = str(node.get("role", "")).lower()
-    return kind in {"output_text", "text", "message", "assistant_message"} or role == "assistant"
+    return kind in {"output_text", "text", "message", "assistant_message", "agent_message"} or role == "assistant"
 
 
 def _looks_like_message_content(node: dict[str, object]) -> bool:
     role = str(node.get("role", "")).lower()
     kind = str(node.get("type", "")).lower()
-    return role == "assistant" or kind in {"message", "assistant_message", "response"}
+    return role == "assistant" or kind in {"message", "assistant_message", "agent_message", "response"}
 
 
 def _dedupe_preserve_order(values: list[str]) -> list[str]:
