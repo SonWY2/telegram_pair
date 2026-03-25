@@ -27,6 +27,10 @@ class BotConfig:
     priority: int
     mention_aliases: tuple[str, ...]
     default_model: str | None = None
+    session_mode: str = "stateless"
+    session_start_args: tuple[str, ...] = ()
+    session_resume_args: tuple[str, ...] = ()
+    session_output_format: str = "text"
 
     @property
     def canonical_mention(self) -> str:
@@ -60,6 +64,7 @@ class RuntimeConfig:
     max_context_turns: int
     dedup_ttl_seconds: int
     progress_notice_delay_seconds: float
+    force_context_restack: bool
     target_chat_id: int | None
     log_level: str
     bot_configs: tuple[BotConfig, ...]
@@ -136,6 +141,11 @@ def load_config(env: Mapping[str, str] | None = None) -> RuntimeConfig:
             "TELEGRAM_PAIR_PROGRESS_NOTICE_DELAY_SECONDS",
             DEFAULT_PROGRESS_NOTICE_DELAY_SECONDS,
         ),
+        force_context_restack=_parse_bool(
+            values,
+            "TELEGRAM_PAIR_FORCE_CONTEXT_RESTACK",
+            False,
+        ),
         target_chat_id=_parse_optional_int(values.get("TELEGRAM_PAIR_TARGET_CHAT_ID")),
         log_level=values.get("TELEGRAM_PAIR_LOG_LEVEL", "INFO").upper(),
         bot_configs=(
@@ -151,6 +161,10 @@ def load_config(env: Mapping[str, str] | None = None) -> RuntimeConfig:
                 default_args="-p",
                 model_key="CLAUDE_MODEL",
                 priority=1,
+                default_session_mode="stateless",
+                default_session_start_args=(),
+                default_session_resume_args=(),
+                default_session_output_format="text",
             ),
             _load_bot_config(
                 values,
@@ -164,6 +178,10 @@ def load_config(env: Mapping[str, str] | None = None) -> RuntimeConfig:
                 default_args="",
                 model_key="CODEX_MODEL",
                 priority=2,
+                default_session_mode="resume",
+                default_session_start_args=("exec", "--skip-git-repo-check", "--json"),
+                default_session_resume_args=("exec", "resume", "--skip-git-repo-check", "--json"),
+                default_session_output_format="json",
             ),
         ),
     )
@@ -216,6 +234,10 @@ def _load_bot_config(
     default_args: str,
     model_key: str,
     priority: int,
+    default_session_mode: str,
+    default_session_start_args: tuple[str, ...],
+    default_session_resume_args: tuple[str, ...],
+    default_session_output_format: str,
 ) -> BotConfig:
     name = values.get(name_key, default_name).strip() or default_name
     aliases = _parse_aliases(name, values.get(aliases_key, ""))
@@ -227,6 +249,23 @@ def _load_bot_config(
         priority=priority,
         mention_aliases=aliases,
         default_model=values.get(model_key, "").strip() or None,
+        session_mode=values.get(f"{name_key}_SESSION_MODE", default_session_mode).strip() or default_session_mode,
+        session_start_args=_parse_args(
+            values.get(
+                f"{name_key}_SESSION_START_ARGS",
+                _join_args(default_session_start_args),
+            )
+        ),
+        session_resume_args=_parse_args(
+            values.get(
+                f"{name_key}_SESSION_RESUME_ARGS",
+                _join_args(default_session_resume_args),
+            )
+        ),
+        session_output_format=(
+            values.get(f"{name_key}_SESSION_OUTPUT_FORMAT", default_session_output_format).strip()
+            or default_session_output_format
+        ),
     )
 
 
@@ -276,3 +315,19 @@ def _parse_float(values: Mapping[str, str], key: str, default: float) -> float:
         return float(raw)
     except ValueError as exc:
         raise ConfigError(f"{key} must be a number, got: {raw!r}") from exc
+
+
+def _parse_bool(values: Mapping[str, str], key: str, default: bool) -> bool:
+    raw = values.get(key)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{key} must be a boolean, got: {raw!r}")
+
+
+def _join_args(args: tuple[str, ...]) -> str:
+    return " ".join(shlex.quote(arg) for arg in args)
