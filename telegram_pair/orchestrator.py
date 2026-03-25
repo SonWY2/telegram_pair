@@ -19,6 +19,9 @@ from .models import (
     RouteMode,
     TeamContext,
 )
+from .orchestrator_commands import OrchestratorCommandHandler
+from .session_runtime import SessionAwareRunner
+from .session_store import SessionStore
 
 BKit_USAGE_MARKER = "bkit Feature Usage"
 LOGGER = logging.getLogger(__name__)
@@ -43,6 +46,20 @@ class PairOrchestrator:
         self.cli_runner = cli_runner
         self.model_registry = model_registry or ModelRegistry(runtime_config)
         self._chat_locks: dict[int, asyncio.Lock] = {}
+        self.session_store = SessionStore(runtime_config.workspace_dir)
+        self.session_runner = SessionAwareRunner(
+            runtime_config,
+            cli_runner,
+            self.model_registry,
+            build_cli_prompt,
+            self.session_store,
+        )
+        self.command_handler = OrchestratorCommandHandler(
+            runtime_config,
+            self.model_registry,
+            self.session_store,
+            send_message,
+        )
 
     async def handle_route(
         self,
@@ -54,14 +71,17 @@ class PairOrchestrator:
     ) -> list[CliResult]:
         if not route.should_process:
             return []
-        lock = self._chat_locks.setdefault(chat_id, asyncio.Lock())
-        async with lock:
+        async with self._chat_lock(chat_id):
             return await self._handle_route_locked(
                 chat_id=chat_id,
                 message_id=message_id,
                 user_text=user_text,
                 route=route,
             )
+
+    async def handle_app_command(self, *, chat_id: int, command_text: str) -> bool:
+        async with self._chat_lock(chat_id):
+            return await self.command_handler.handle(chat_id=chat_id, command_text=command_text)
 
     async def _handle_route_locked(
         self,
@@ -90,6 +110,7 @@ class PairOrchestrator:
             result = await self._run_bot_with_progress(
                 bot=bots[0],
                 chat_id=chat_id,
+                message_id=message_id,
                 progress_text=f"⏳ {bots[0].name} 작업을 시작합니다...",
                 user_text=user_text,
                 context_excerpt=context_excerpt,
@@ -101,6 +122,7 @@ class PairOrchestrator:
             return await self._handle_team_route(
                 bots=bots,
                 chat_id=chat_id,
+                message_id=message_id,
                 user_text=user_text,
                 context_excerpt=context_excerpt,
             )
@@ -108,15 +130,20 @@ class PairOrchestrator:
             return await self._handle_sequential_broadcast_route(
                 bots=bots,
                 chat_id=chat_id,
+                message_id=message_id,
                 user_text=user_text,
                 context_excerpt=context_excerpt,
             )
         return await self._handle_parallel_broadcast_route(
             bots=bots,
             chat_id=chat_id,
+            message_id=message_id,
             user_text=user_text,
             context_excerpt=context_excerpt,
         )
+
+    def _chat_lock(self, chat_id: int) -> asyncio.Lock:
+        return self._chat_locks.setdefault(chat_id, asyncio.Lock())
 
     def _resolve_target_bots(self, route: RouteDecision) -> tuple[BotConfig, ...]:
         if route.mode is RouteMode.BROADCAST:
@@ -136,6 +163,7 @@ class PairOrchestrator:
         *,
         bot: BotConfig,
         chat_id: int,
+        message_id: int | None,
         user_text: str,
         context_excerpt: str,
         broadcast_context: BroadcastContext | None = None,
@@ -143,53 +171,18 @@ class PairOrchestrator:
         mode_label: str = "single",
         emit_response: bool = True,
     ) -> CliResult:
-        prompt = build_cli_prompt(
+        result = await self.session_runner.execute(
+            bot=bot,
+            chat_id=chat_id,
+            message_id=message_id,
             user_text=user_text,
             context_excerpt=context_excerpt,
             broadcast_context=broadcast_context,
             team_context=team_context,
+            mode_label=mode_label,
         )
-        request = CliRequest(
-            bot_name=bot.name,
-            executable=bot.cli_executable,
-            args=bot.cli_args,
-            prompt=prompt,
-            cwd=self.runtime_config.workspace_dir,
-            timeout_seconds=self.runtime_config.timeout_seconds,
-            context_excerpt=context_excerpt,
-            metadata={
-                "chat_id": chat_id,
-                "mode": mode_label,
-            },
-            model_override=self.model_registry.get_model(bot.name),
-        )
-        LOGGER.info(
-            "cli_start bot=%s chat_id=%s mode=%s model=%s",
-            bot.name,
-            chat_id,
-            request.metadata["mode"],
-            request.model_override or "(default)",
-        )
-        result = await self.cli_runner(request)
-        LOGGER.info(
-            "cli_finish bot=%s chat_id=%s ok=%s duration=%.2fs error_type=%s",
-            bot.name,
-            chat_id,
-            result.ok,
-            result.duration_seconds,
-            result.error_type or "",
-        )
-        visible_text = render_result_for_telegram(result)
         if emit_response:
-            await self.send_message(bot.name, chat_id, visible_text)
-            self.context_manager.append_turn(
-                ConversationTurn(
-                    speaker_type="bot",
-                    speaker_name=bot.name,
-                    text=visible_text,
-                    chat_id=chat_id,
-                )
-            )
+            await self._emit_result(result, chat_id=chat_id)
         return result
 
     async def _run_bot_with_progress(
@@ -197,6 +190,7 @@ class PairOrchestrator:
         *,
         bot: BotConfig,
         chat_id: int,
+        message_id: int | None,
         progress_text: str,
         user_text: str,
         context_excerpt: str,
@@ -216,6 +210,7 @@ class PairOrchestrator:
             return await self._run_bot(
                 bot=bot,
                 chat_id=chat_id,
+                message_id=message_id,
                 user_text=user_text,
                 context_excerpt=context_excerpt,
                 broadcast_context=broadcast_context,
@@ -228,64 +223,20 @@ class PairOrchestrator:
                 notice_task.cancel()
                 await asyncio.gather(notice_task, return_exceptions=True)
 
+    async def _emit_result(self, result: CliResult, *, chat_id: int) -> None:
+        visible_text = render_result_for_telegram(result)
+        await self.send_message(result.bot_name, chat_id, visible_text)
+        self.context_manager.append_turn(
+            ConversationTurn(
+                speaker_type="bot",
+                speaker_name=result.bot_name,
+                text=visible_text,
+                chat_id=chat_id,
+            )
+        )
+
     def _failure_note(self, result: CliResult) -> str:
         return f"{result.bot_name} failed: {result.error_type or 'runtime_error'} - {result.error_message or 'unknown error'}"
-
-    async def handle_app_command(self, *, chat_id: int, command_text: str) -> bool:
-        if _is_help_command(command_text):
-            await self.send_message(
-                _control_reply_bot_name(self.runtime_config),
-                chat_id,
-                _render_help_text(self.runtime_config),
-            )
-            return True
-        return await self.handle_model_command(chat_id=chat_id, command_text=command_text)
-
-    async def handle_model_command(self, *, chat_id: int, command_text: str) -> bool:
-        parsed = _parse_model_command(command_text)
-        if parsed is None:
-            return False
-
-        action, target, value = parsed
-        if action == "status":
-            await self.send_message(_control_reply_bot_name(self.runtime_config), chat_id, self._render_model_status())
-            return True
-
-        try:
-            bot_names = _resolve_model_targets(self.runtime_config, target)
-        except ValueError:
-            await self.send_message(
-                _control_reply_bot_name(self.runtime_config),
-                chat_id,
-                _render_model_help(),
-            )
-            return True
-        if action == "set" and value:
-            for bot_name in bot_names:
-                self.model_registry.set_model(bot_name, value)
-            await self.send_message(
-                _control_reply_bot_name(self.runtime_config, target),
-                chat_id,
-                _render_model_set_reply(bot_names, value),
-            )
-            return True
-
-        if action == "reset":
-            for bot_name in bot_names:
-                self.model_registry.reset_model(bot_name)
-            await self.send_message(
-                _control_reply_bot_name(self.runtime_config, target),
-                chat_id,
-                _render_model_reset_reply(bot_names),
-            )
-            return True
-
-        await self.send_message(
-            _control_reply_bot_name(self.runtime_config),
-            chat_id,
-            _render_model_help(),
-        )
-        return True
 
     async def _send_progress_notice(self, bot: BotConfig, chat_id: int, text: str) -> None:
         LOGGER.info("progress_notice bot=%s chat_id=%s text=%r", bot.name, chat_id, text)
@@ -307,18 +258,12 @@ class PairOrchestrator:
             return
         await self._send_progress_notice(bot, chat_id, text)
 
-    def _render_model_status(self) -> str:
-        snapshot = self.model_registry.snapshot()
-        lines = ["현재 모델 설정:"]
-        for bot in self.runtime_config.bot_configs:
-            lines.append(f"- {bot.name}: {snapshot.get(bot.name) or '(default)'}")
-        return "\n".join(lines)
-
     async def _handle_parallel_broadcast_route(
         self,
         *,
         bots: tuple[BotConfig, ...],
         chat_id: int,
+        message_id: int | None,
         user_text: str,
         context_excerpt: str,
         hidden_bot_names: frozenset[str] | None = None,
@@ -329,6 +274,7 @@ class PairOrchestrator:
                 self._run_bot_with_progress(
                     bot=bot,
                     chat_id=chat_id,
+                    message_id=message_id,
                     progress_text=f"⏳ {bot.name} 작업을 시작합니다...",
                     user_text=user_text,
                     context_excerpt=context_excerpt,
@@ -347,6 +293,7 @@ class PairOrchestrator:
         *,
         bots: tuple[BotConfig, ...],
         chat_id: int,
+        message_id: int | None,
         user_text: str,
         context_excerpt: str,
     ) -> list[CliResult]:
@@ -355,6 +302,7 @@ class PairOrchestrator:
         first_result = await self._run_bot_with_progress(
             bot=first_bot,
             chat_id=chat_id,
+            message_id=message_id,
             progress_text=f"⏳ {first_bot.name} 작업을 시작합니다...",
             user_text=user_text,
             context_excerpt=context_excerpt,
@@ -372,6 +320,7 @@ class PairOrchestrator:
             result = await self._run_bot_with_progress(
                 bot=bot,
                 chat_id=chat_id,
+                message_id=message_id,
                 progress_text=f"⏳ {bot.name} 검토 응답을 준비합니다...",
                 user_text=user_text,
                 context_excerpt=context_excerpt,
@@ -386,6 +335,7 @@ class PairOrchestrator:
         *,
         bots: tuple[BotConfig, ...],
         chat_id: int,
+        message_id: int | None,
         user_text: str,
         context_excerpt: str,
     ) -> list[CliResult]:
@@ -393,6 +343,7 @@ class PairOrchestrator:
         first_stage_results = await self._handle_parallel_broadcast_route(
             bots=bots,
             chat_id=chat_id,
+            message_id=message_id,
             user_text=user_text,
             context_excerpt=context_excerpt,
             hidden_bot_names=frozenset({integration_bot.name}),
@@ -412,6 +363,7 @@ class PairOrchestrator:
         team_result = await self._run_bot_with_progress(
             bot=integration_bot,
             chat_id=chat_id,
+            message_id=message_id,
             progress_text=f"⏳ {integration_bot.name} 팀 통합 응답을 준비합니다...",
             user_text=user_text,
             context_excerpt=context_excerpt,
@@ -454,89 +406,3 @@ def _truncate_bkit_usage_tail(text: str) -> str:
             trimmed = "\n".join(lines[:index]).rstrip()
             return trimmed or "(empty response)"
     return text
-
-
-def _parse_model_command(text: str) -> tuple[str, str | None, str | None] | None:
-    stripped = text.strip()
-    if not stripped.lower().startswith("/model"):
-        return None
-    parts = stripped.split()
-    parts[0] = parts[0].split("@", 1)[0]
-    if len(parts) == 1:
-        return ("status", None, None)
-    if len(parts) == 2 and parts[1].lower() == "status":
-        return ("status", None, None)
-    if len(parts) >= 3 and parts[1].lower() == "reset":
-        return ("reset", parts[2].lower(), None)
-    if len(parts) >= 3:
-        return ("set", parts[1].lower(), " ".join(parts[2:]).strip())
-    return ("help", None, None)
-
-
-def _is_help_command(text: str) -> bool:
-    lowered = text.strip().lower()
-    return lowered == "/help" or lowered.startswith("/help@")
-
-
-def _resolve_model_targets(runtime_config: RuntimeConfig, target: str | None) -> tuple[str, ...]:
-    claude_name = runtime_config.bot_configs[0].name
-    codex_name = runtime_config.bot_configs[1].name
-    if target == "claude":
-        return (claude_name,)
-    if target == "codex":
-        return (codex_name,)
-    if target == "all":
-        return (claude_name, codex_name)
-    raise ValueError(f"Unsupported model target: {target}")
-
-
-def _control_reply_bot_name(runtime_config: RuntimeConfig, target: str | None = None) -> str:
-    if target == "codex":
-        return runtime_config.bot_configs[1].name
-    return runtime_config.bot_configs[0].name
-
-
-def _render_model_set_reply(bot_names: tuple[str, ...], model: str) -> str:
-    if len(bot_names) == 1:
-        return f"모델 변경 완료: {bot_names[0]} -> {model}"
-    return f"모델 변경 완료: {', '.join(bot_names)} -> {model}"
-
-
-def _render_model_reset_reply(bot_names: tuple[str, ...]) -> str:
-    if len(bot_names) == 1:
-        return f"모델 설정 초기화 완료: {bot_names[0]}"
-    return f"모델 설정 초기화 완료: {', '.join(bot_names)}"
-
-
-def _render_model_help() -> str:
-    return (
-        "사용법:\n"
-        "/model status\n"
-        "/model claude <model>\n"
-        "/model codex <model>\n"
-        "/model all <model>\n"
-        "/model reset claude|codex|all"
-    )
-
-
-def _render_help_text(runtime_config: RuntimeConfig) -> str:
-    claude = runtime_config.bot_configs[0].canonical_mention
-    codex = runtime_config.bot_configs[1].canonical_mention
-    return (
-        "Telegram Pair 도움말\n\n"
-        "1) 단일 호출\n"
-        f"- {claude} 이 함수 리팩터링해줘\n"
-        f"- {codex} 이 테스트 실패 원인 찾아줘\n\n"
-        "2) 두 봇 함께 호출\n"
-        "- 병렬 비교: ; 이 구현 대안을 비교해줘\n"
-        f"- 두 봇 동시 멘션도 동일: {claude} {codex} 이 구현 대안을 비교해줘\n"
-        "- 순차 검토: ; seq 이 설계를 먼저 제안하고 그다음 보완해줘\n"
-        "- 팀 협업: ; team 비트코인 전망을 각각 분석하고 마지막에 결론 내줘\n\n"
-        "3) 모델 제어\n"
-        "- /model status\n"
-        "- /model claude <model>\n"
-        "- /model codex <model>\n"
-        "- /model all <model>\n"
-        "- /model reset claude|codex|all\n\n"
-        "팁: 일반 Telegram 명령(/start 등)은 무시되고, /help 와 /model만 앱 명령으로 처리됩니다."
-    )
